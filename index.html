@@ -458,9 +458,10 @@ function tally(picks) {
     if (p.result === "Hit") hit++;
     else if (p.result === "Meh") meh++;
     else if (p.result === "Miss") miss++;
-    else pending++;
+    else if (p.player) pending++;
+    // Picks with no player assigned (future slots) are excluded from totals.
   });
-  return { hit, meh, miss, pending, total: picks.length, graded: hit + meh + miss };
+  return { hit, meh, miss, pending, total: hit + meh + miss + pending, graded: hit + meh + miss };
 }
 
 function uniqueSorted(arr) { return [...new Set(arr)].sort(); }
