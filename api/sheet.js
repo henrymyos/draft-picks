@@ -2,7 +2,7 @@ const SHEET_ID = "116MXUbHLTCDdSgVx5dZZYW0lydVyAN0rkeItdq-U7Bo";
 const RANGE = "A1:AM350";
 
 export default async function handler(req, res) {
-  const key = process.env.GOOGLE_API_KEY;
+  const key = process.env.GOOGLE_API_KEY || process.env.Google_API_KEY;
   if (!key) {
     res.status(500).json({ error: "GOOGLE_API_KEY env var not set on Vercel." });
     return;
