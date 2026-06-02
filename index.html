@@ -367,14 +367,39 @@
 </footer>
 <script>
 const REFRESH_MS = 60_000;
-const POS_MAP_KEY = "draftpicks.posMap.v1";
+
+// Fixed color → position mapping. Cells in the sheet are colored:
+//   red → QB, green → RB, blue → WR, orange → TE
+const POSITION_COLORS = {
+  QB: "#e06666",
+  RB: "#6aa84f",
+  WR: "#3c78d8",
+  TE: "#f6b26b",
+};
+function classifyColor(hex) {
+  if (!hex) return null;
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  if (max === min) return null;
+  const d = max - min;
+  let h;
+  if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+  else if (max === g) h = ((b - r) / d + 2) * 60;
+  else h = ((r - g) / d + 4) * 60;
+  if (h < 0) h += 360;
+  if (h >= 330 || h < 20) return "QB";       // red
+  if (h >= 20 && h < 60) return "TE";        // orange/yellow
+  if (h >= 60 && h < 170) return "RB";       // green
+  if (h >= 170 && h < 270) return "WR";      // blue
+  return null;
+}
 
 let state = {
-  picks: [],          // {year, round, person, player, result, color}
+  picks: [],          // {year, round, person, player, result, color, pos}
   years: [],
   people: [],
-  colors: [],         // unique non-white hex colors found on player cells
-  posMap: loadPosMap(),  // { "#rrggbb": "QB" | "RB" | ... }
   view: "overview",
   selectedYear: null,
   selectedPerson: null,
@@ -384,14 +409,6 @@ let state = {
   leaderboardRound: null,
   statsRound: null,
 };
-
-function loadPosMap() {
-  try { return JSON.parse(localStorage.getItem(POS_MAP_KEY)) || {}; }
-  catch { return {}; }
-}
-function savePosMap() {
-  try { localStorage.setItem(POS_MAP_KEY, JSON.stringify(state.posMap)); } catch {}
-}
 
 function rgbToHex(bg) {
   if (!bg) return null;
@@ -470,6 +487,7 @@ function extractPicks(rows) {
       if (/^[\d,\s]+$/.test(person)) continue;
       pickInRound += 1;
       const slot = currentRound ? `${currentRound}.${String(pickInRound).padStart(2, "0")}` : null;
+      const color = cellColor(rows, r, playerCol);
       picks.push({
         year: yh.year,
         round: currentRound,
@@ -478,7 +496,8 @@ function extractPicks(rows) {
         person: person === "Me" ? "Henry" : person,
         player: player || null,
         result: normalizeResult(result),
-        color: cellColor(rows, r, playerCol),
+        color,
+        pos: classifyColor(color),
       });
     }
   });
@@ -914,53 +933,12 @@ function renderStats() {
   matrixCard.appendChild(matrixTable);
   main.appendChild(matrixCard);
 
-  // ----- Color → Position mapping (saved to localStorage) -----
-  const colorsSeen = uniqueSorted(filterPicks(state.picks).map(p => p.color).filter(Boolean));
-  const mapCard = el("div", { class: "card" }, el("h2", {}, "Position colors"));
-  if (!colorsSeen.length) {
-    mapCard.appendChild(el("div", { class: "empty" },
-      "No colored cells found. Make sure the GOOGLE_API_KEY env var is set on Vercel."
-    ));
-  } else {
-    mapCard.appendChild(el("div", { class: "pct", style: "margin-bottom:10px" },
-      "Label each color (saved locally). Picks share the color of the Player cell in the sheet."
-    ));
-    colorsSeen.forEach(c => {
-      mapCard.appendChild(el("div", { class: "color-row" },
-        el("span", { class: "swatch", style: "background:" + c }),
-        el("code", { style: "color:var(--muted);font-size:12px" }, c),
-        el("input", {
-          type: "text",
-          placeholder: "Label (e.g. QB)",
-          value: state.posMap[c] || "",
-          oninput: e => {
-            const v = e.target.value.trim();
-            if (v) state.posMap[c] = v;
-            else delete state.posMap[c];
-            savePosMap();
-            // refresh just the position table — but simplest is a full re-render
-            // (debounced via blur instead of every keystroke would be nicer)
-          },
-          onblur: () => render(),
-        }),
-      ));
-    });
-  }
-  main.appendChild(mapCard);
-
-  // ----- Position breakdown -----
+  // ----- Position breakdown (fixed mapping: red=QB, green=RB, blue=WR, orange=TE) -----
   const posCard = el("div", { class: "card" }, el("h2", {}, "By Position"));
-  const posPicks = filterPicks(state.picks).filter(p => p.color);
+  const posPicks = filterPicks(state.picks).filter(p => p.pos);
   if (!posPicks.length) {
     posCard.appendChild(el("div", { class: "empty" }, "No position-colored picks in this scope."));
   } else {
-    // Group: label if mapped, otherwise the raw color code
-    const groups = {};
-    posPicks.forEach(p => {
-      const label = state.posMap[p.color] || p.color;
-      if (!groups[label]) groups[label] = { color: p.color, picks: [] };
-      groups[label].picks.push(p);
-    });
     const posTable = el("table", {},
       el("thead", {}, el("tr", {},
         el("th", {}, "Position"),
@@ -974,14 +952,15 @@ function renderStats() {
       )),
     );
     const ptbody = el("tbody", {});
-    Object.entries(groups)
-      .map(([label, g]) => ({ label, color: g.color, t: tally(g.picks) }))
+    ["QB", "RB", "WR", "TE"]
+      .map(pos => ({ pos, t: tally(posPicks.filter(p => p.pos === pos)) }))
+      .filter(r => r.t.total > 0)
       .sort((a, b) => (b.t.graded ? b.t.hit / b.t.graded : 0) - (a.t.graded ? a.t.hit / a.t.graded : 0))
-      .forEach(({ label, color, t }) => {
+      .forEach(({ pos, t }) => {
         ptbody.appendChild(el("tr", {},
           el("td", {},
-            el("span", { class: "swatch", style: "background:" + color }),
-            label
+            el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+            pos
           ),
           el("td", { class: "num" }, String(t.total)),
           el("td", { class: "num tight" }, String(t.hit)),
@@ -1039,7 +1018,6 @@ async function loadData() {
     state.picks = picks;
     state.years = uniqueSorted(picks.map(p => p.year));
     state.people = uniqueSorted(picks.map(p => p.person));
-    state.colors = uniqueSorted(picks.map(p => p.color).filter(Boolean));
     state.lastUpdated = new Date();
     setStatus("ok", "Updated " + state.lastUpdated.toLocaleTimeString());
     render();
