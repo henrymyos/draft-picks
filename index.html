@@ -856,24 +856,6 @@ function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
 
-  // ----- Round filter -----
-  const controls = el("div", { class: "controls" });
-  const roundOpts = [
-    { value: null, label: "All Rounds" },
-    { value: 1, label: "Round 1 only" },
-    { value: 2, label: "Round 2 only" },
-    { value: 3, label: "Round 3 only" },
-  ];
-  controls.appendChild(customSelect(roundOpts, state.statsRound, v => {
-    state.statsRound = v;
-    render();
-  }));
-  main.appendChild(controls);
-
-  const filterPicks = (picks) => state.statsRound == null
-    ? picks
-    : picks.filter(p => p.round === state.statsRound);
-
   // ----- All-time round breakdown -----
   const roundCard = el("div", { class: "card" }, el("h2", {}, "By Round (all years)"));
   const roundTable = el("table", {},
@@ -889,8 +871,18 @@ function renderStats() {
     )),
   );
   const rtbody = el("tbody", {});
+  const allRounds = tally(state.picks.filter(p => p.round != null));
+  rtbody.appendChild(el("tr", { class: "pos-total" },
+    el("td", {}, "All Rounds"),
+    el("td", { class: "num" }, String(allRounds.total)),
+    el("td", { class: "num tight" }, String(allRounds.hit)),
+    el("td", { class: "num tight" }, String(allRounds.meh)),
+    el("td", { class: "num tight" }, String(allRounds.miss)),
+    el("td", { class: "num tight gap-left" }, formatPct(allRounds.hit, allRounds.graded)),
+    el("td", { class: "num tight" }, formatPct(allRounds.hit + allRounds.meh, allRounds.graded)),
+    el("td", {}, renderBar(allRounds)),
+  ));
   [1, 2, 3].forEach(rd => {
-    if (state.statsRound != null && state.statsRound !== rd) return;
     const t = tally(state.picks.filter(p => p.round === rd));
     rtbody.appendChild(el("tr", {},
       el("td", {}, "Round " + rd),
@@ -942,7 +934,7 @@ function renderStats() {
 
   // ----- Position breakdown (fixed mapping: red=QB, green=RB, blue=WR, orange=TE) -----
   const posCard = el("div", { class: "card" }, el("h2", {}, "By Position"));
-  const posPicks = filterPicks(state.picks).filter(p => p.pos);
+  const posPicks = state.picks.filter(p => p.pos);
   if (!posPicks.length) {
     posCard.appendChild(el("div", { class: "empty" }, "No position-colored picks in this scope."));
   } else {
