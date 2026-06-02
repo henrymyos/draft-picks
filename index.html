@@ -106,13 +106,36 @@
     flex-wrap: wrap;
   }
   select {
-    background: var(--panel);
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    background-color: var(--panel);
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%238b949e' d='M0 0l5 6 5-6z'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 8px 12px;
+    padding: 8px 32px 8px 12px;
     font-size: 14px;
-    min-width: 140px;
+    font-family: inherit;
+    font-weight: 500;
+    min-width: 180px;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s, background-color 0.15s;
+  }
+  select:hover {
+    border-color: var(--accent);
+    background-color: var(--panel-2);
+  }
+  select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  }
+  select option {
+    background: var(--panel);
+    color: var(--text);
   }
   .grid {
     display: grid;
