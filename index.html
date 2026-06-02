@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Draft Picks Tracker</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c232c;
+    --border: #2a313a;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --hit: #2ea043;
+    --hit-bg: rgba(46,160,67,0.15);
+    --meh: #d29922;
+    --meh-bg: rgba(210,153,34,0.15);
+    --miss: #f85149;
+    --miss-bg: rgba(248,81,73,0.12);
+    --pending: #6e7681;
+    --pending-bg: rgba(110,118,129,0.15);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  header {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .header-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .status {
+    color: var(--muted);
+    font-size: 13px;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--hit);
+  }
+  .status-dot.loading { background: var(--meh); animation: pulse 1s infinite; }
+  .status-dot.error { background: var(--miss); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  button.refresh {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.refresh:hover { background: var(--border); }
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    margin-top: 12px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: -17px;
+  }
+  nav.tabs button {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 10px 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  nav.tabs button.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+  nav.tabs button:hover:not(.active) { color: var(--text); }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    min-width: 140px;
+  }
+  .grid {
+    display: grid;
+    gap: 16px;
+  }
+  .grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .card h2, .card h3 {
+    margin: 0 0 12px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .card h2 { font-size: 18px; }
+  .round-header {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 16px 0 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .round-header:first-child { margin-top: 0; }
+  .pick-row {
+    display: grid;
+    grid-template-columns: 110px 1fr 70px;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  .pick-row.with-slot {
+    grid-template-columns: 110px 56px 1fr 70px;
+  }
+  .pick-slot {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    font-size: 13px;
+  }
+  .pick-row:hover { background: var(--panel-2); }
+  .pick-person {
+    font-weight: 600;
+    color: var(--text);
+  }
+  .pick-player { color: var(--text); }
+  .pick-result {
+    text-align: center;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+  .result-hit { background: var(--hit-bg); color: var(--hit); }
+  .result-meh { background: var(--meh-bg); color: var(--meh); }
+  .result-miss { background: var(--miss-bg); color: var(--miss); }
+  .result-pending { background: var(--pending-bg); color: var(--pending); }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--text); }
+  th.sortable .arrow { margin-left: 4px; opacity: 0.6; }
+  th.sortable.active { color: var(--accent); }
+  th.sortable.active .arrow { opacity: 1; }
+  tr:hover td { background: var(--panel-2); }
+  .bar-row {
+    display: flex;
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 4px;
+    background: var(--panel-2);
+  }
+  .bar-hit { background: var(--hit); }
+  .bar-meh { background: var(--meh); }
+  .bar-miss { background: var(--miss); }
+  .pct { color: var(--muted); font-size: 12px; }
+  .stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .stat {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .stat-label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat-value {
+    font-size: 26px;
+    font-weight: 600;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .empty {
+    color: var(--muted);
+    text-align: center;
+    padding: 40px 20px;
+    font-style: italic;
+  }
+  a.subtle { color: var(--muted); text-decoration: none; }
+  a.subtle:hover { color: var(--accent); }
+  footer {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: center;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-row">
+    <h1>🏈 Draft Picks Tracker</h1>
+    <div class="status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Loading…</span>
+      <button class="refresh" id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="year">By Year</button>
+    <button data-view="person">By Person</button>
+    <button data-view="leaderboard">Leaderboard</button>
+  </nav>
+</header>
+<main id="main">
+  <div class="empty">Loading draft data…</div>
+</main>
+<footer>
+  Live from <a class="subtle" href="https://docs.google.com/spreadsheets/d/116MXUbHLTCDdSgVx5dZZYW0lydVyAN0rkeItdq-U7Bo/edit" target="_blank" rel="noopener">Google Sheets</a>.
+  Auto-refreshes every 60 seconds.
+</footer>
+<script>
+const SHEET_ID = "116MXUbHLTCDdSgVx5dZZYW0lydVyAN0rkeItdq-U7Bo";
+const GID = "0";
+const REFRESH_MS = 60_000;
+const CALLBACK_NAME = "gvizCallback";
+
+let state = {
+  picks: [],          // {year, round, person, player, result}
+  years: [],
+  people: [],
+  view: "overview",
+  selectedYear: null,
+  selectedPerson: null,
+  lastUpdated: null,
+  overviewSort: { col: "year", dir: "asc" },
+  leaderboardSort: { col: "hitPct", dir: "desc" },
+};
+
+function toggleSort(sortState, col) {
+  if (sortState.col === col) {
+    sortState.dir = sortState.dir === "asc" ? "desc" : "asc";
+  } else {
+    sortState.col = col;
+    sortState.dir = "desc";
+  }
+}
+
+function sortHeader(label, col, sortState, onClick) {
+  const active = sortState.col === col;
+  const arrow = active ? (sortState.dir === "asc" ? "▲" : "▼") : "";
+  return el("th", {
+    class: "num sortable" + (active ? " active" : ""),
+    onclick: onClick,
+  }, label, arrow ? el("span", { class: "arrow" }, arrow) : "");
+}
+
+function gvizTableToRows(table) {
+  if (!table || !table.rows) return [];
+  const numCols = (table.cols || []).length;
+  return table.rows.map(r => {
+    const out = [];
+    for (let i = 0; i < numCols; i++) {
+      const c = r.c && r.c[i];
+      out.push(c && c.v != null ? String(c.v) : "");
+    }
+    return out;
+  });
+}
+
+function extractPicks(rows) {
+  // Find year headers: row[col] matches /^(\d{4}) Draft$/
+  const yearHeaders = []; // {year, row, col}
+  rows.forEach((r, ri) => {
+    r.forEach((cell, ci) => {
+      const m = (cell || "").trim().match(/^(\d{4}) Draft$/);
+      if (m) yearHeaders.push({ year: parseInt(m[1], 10), row: ri, col: ci });
+    });
+  });
+  yearHeaders.sort((a, b) => a.row - b.row);
+
+  const picks = [];
+  yearHeaders.forEach((yh, idx) => {
+    const endRow = idx + 1 < yearHeaders.length ? yearHeaders[idx + 1].row : rows.length;
+    const yearCol = yh.col;        // round labels live here
+    const personCol = yearCol - 1;
+    const playerCol = yearCol;
+    const resultCol = yearCol + 1;
+    let currentRound = null;
+    let pickInRound = 0;
+    for (let r = yh.row + 1; r < endRow; r++) {
+      const row = rows[r] || [];
+      const yearColVal = (row[yearCol] || "").trim();
+      const roundMatch = yearColVal.match(/^Round\s*(\d+)$/i);
+      if (roundMatch) {
+        currentRound = parseInt(roundMatch[1], 10);
+        pickInRound = 0;
+        continue;
+      }
+      const person = (row[personCol] || "").trim();
+      const player = (row[playerCol] || "").trim();
+      const result = (row[resultCol] || "").trim();
+      if (!person) continue;
+      if (/^Round\s*\d+$/i.test(person)) continue;
+      if (/^Round\s*\d+$/i.test(player)) continue;
+      if (/^[\d,\s]+$/.test(person)) continue;
+      pickInRound += 1;
+      const slot = currentRound ? `${currentRound}.${String(pickInRound).padStart(2, "0")}` : null;
+      picks.push({
+        year: yh.year,
+        round: currentRound,
+        pickInRound,
+        slot,
+        person,
+        player: player || null,
+        result: normalizeResult(result),
+      });
+    }
+  });
+  return picks;
+}
+
+function normalizeResult(r) {
+  if (!r) return null;
+  const s = r.trim().toLowerCase();
+  if (s === "hit") return "Hit";
+  if (s === "meh") return "Meh";
+  if (s === "miss") return "Miss";
+  return null;
+}
+
+function resultClass(r) {
+  if (r === "Hit") return "result-hit";
+  if (r === "Meh") return "result-meh";
+  if (r === "Miss") return "result-miss";
+  return "result-pending";
+}
+
+function tally(picks) {
+  let hit = 0, meh = 0, miss = 0, pending = 0;
+  picks.forEach(p => {
+    if (p.result === "Hit") hit++;
+    else if (p.result === "Meh") meh++;
+    else if (p.result === "Miss") miss++;
+    else pending++;
+  });
+  return { hit, meh, miss, pending, total: picks.length, graded: hit + meh + miss };
+}
+
+function uniqueSorted(arr) { return [...new Set(arr)].sort(); }
+
+function formatPct(n, d) {
+  if (!d) return "—";
+  return ((n / d) * 100).toFixed(1) + "%";
+}
+
+function el(tag, attrs = {}, ...children) {
+  const e = document.createElement(tag);
+  for (const k in attrs) {
+    if (k === "class") e.className = attrs[k];
+    else if (k === "html") e.innerHTML = attrs[k];
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
+    else e.setAttribute(k, attrs[k]);
+  }
+  children.flat().forEach(c => {
+    if (c == null || c === false) return;
+    e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  });
+  return e;
+}
+
+function renderBar(t) {
+  const total = t.graded || 1;
+  const hitW = (t.hit / total) * 100;
+  const mehW = (t.meh / total) * 100;
+  const missW = (t.miss / total) * 100;
+  return el("div", { class: "bar-row" },
+    el("div", { class: "bar-hit", style: `width:${hitW}%` }),
+    el("div", { class: "bar-meh", style: `width:${mehW}%` }),
+    el("div", { class: "bar-miss", style: `width:${missW}%` }),
+  );
+}
+
+function renderPickRow(p) {
+  return el("div", { class: "pick-row with-slot" },
+    el("div", { class: "pick-person" }, p.person),
+    el("div", { class: "pick-slot" }, p.slot || "—"),
+    el("div", { class: "pick-player" }, p.player || el("span", { class: "pct" }, "—")),
+    el("div", { class: "pick-result " + resultClass(p.result) }, p.result || "Pending"),
+  );
+}
+
+function renderOverview() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+
+  const t = tally(state.picks);
+  const stats = el("div", { class: "stat-grid" },
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Total Picks"), el("div", { class: "stat-value" }, String(t.total))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Years"), el("div", { class: "stat-value" }, String(state.years.length))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Drafters"), el("div", { class: "stat-value" }, String(state.people.length))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit Rate"), el("div", { class: "stat-value" }, formatPct(t.hit, t.graded))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit + Meh %"), el("div", { class: "stat-value" }, formatPct(t.hit + t.meh, t.graded))),
+  );
+  main.appendChild(stats);
+
+  // Per-year summary card
+  const yearCard = el("div", { class: "card" }, el("h2", {}, "By Year"));
+  const yearTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Year"),
+      el("th", { class: "num" }, "Picks"),
+      el("th", { class: "num" }, "Hit"),
+      el("th", { class: "num" }, "Meh"),
+      el("th", { class: "num" }, "Miss"),
+      sortHeader("Hit %", "hitPct", state.overviewSort, () => { toggleSort(state.overviewSort, "hitPct"); render(); }),
+      sortHeader("Hit + Meh", "hmPct", state.overviewSort, () => { toggleSort(state.overviewSort, "hmPct"); render(); }),
+      el("th", {}, "Result"),
+    ))
+  );
+  const tbody = el("tbody", {});
+  const yearRows = state.years.map(y => {
+    const yp = state.picks.filter(p => p.year === y);
+    const t = tally(yp);
+    return { y, t, hitPct: t.graded ? t.hit / t.graded : -1, hmPct: t.graded ? (t.hit + t.meh) / t.graded : -1 };
+  });
+  const sd = state.overviewSort.dir === "asc" ? 1 : -1;
+  if (state.overviewSort.col === "year") yearRows.sort((a, b) => sd * (a.y - b.y));
+  else yearRows.sort((a, b) => sd * (a[state.overviewSort.col] - b[state.overviewSort.col]));
+  yearRows.forEach(({ y, t }) => {
+    const tr = el("tr", {
+      style: "cursor:pointer",
+      onclick: () => { state.view = "year"; state.selectedYear = y; setActiveTab("year"); render(); }
+    },
+      el("td", {}, String(y)),
+      el("td", { class: "num" }, String(t.total)),
+      el("td", { class: "num" }, String(t.hit)),
+      el("td", { class: "num" }, String(t.meh)),
+      el("td", { class: "num" }, String(t.miss)),
+      el("td", { class: "num" }, formatPct(t.hit, t.graded)),
+      el("td", { class: "num" }, formatPct(t.hit + t.meh, t.graded)),
+      el("td", {}, renderBar(t)),
+    );
+    tbody.appendChild(tr);
+  });
+  yearTable.appendChild(tbody);
+  yearCard.appendChild(yearTable);
+  main.appendChild(yearCard);
+}
+
+function renderYearView() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  const controls = el("div", { class: "controls" });
+  const sel = el("select", { onchange: e => { state.selectedYear = parseInt(e.target.value, 10); renderYearView(); } });
+  state.years.slice().reverse().forEach(y => {
+    sel.appendChild(el("option", { value: String(y) }, String(y) + " Draft"));
+  });
+  if (state.selectedYear == null) state.selectedYear = state.years[state.years.length - 1];
+  sel.value = String(state.selectedYear);
+  controls.appendChild(sel);
+  main.appendChild(controls);
+
+  const yearPicks = state.picks.filter(p => p.year === state.selectedYear);
+  const t = tally(yearPicks);
+
+  const stats = el("div", { class: "stat-grid" },
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Picks"), el("div", { class: "stat-value" }, String(t.total))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit"), el("div", { class: "stat-value" }, String(t.hit))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Meh"), el("div", { class: "stat-value" }, String(t.meh))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Miss"), el("div", { class: "stat-value" }, String(t.miss))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit %"), el("div", { class: "stat-value" }, formatPct(t.hit, t.graded))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit + Meh %"), el("div", { class: "stat-value" }, formatPct(t.hit + t.meh, t.graded))),
+  );
+  main.appendChild(stats);
+
+  // Group by round
+  const rounds = uniqueSorted(yearPicks.map(p => p.round || 0));
+  const card = el("div", { class: "card" });
+  card.appendChild(el("h2", {}, state.selectedYear + " Draft"));
+  rounds.forEach(r => {
+    card.appendChild(el("div", { class: "round-header" }, r ? "Round " + r : "Unknown Round"));
+    yearPicks.filter(p => (p.round || 0) === r).forEach(p => {
+      card.appendChild(renderPickRow(p));
+    });
+  });
+  if (!yearPicks.length) card.appendChild(el("div", { class: "empty" }, "No picks recorded for this year yet."));
+  main.appendChild(card);
+}
+
+function renderPersonView() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  const controls = el("div", { class: "controls" });
+  const sel = el("select", { onchange: e => { state.selectedPerson = e.target.value; renderPersonView(); } });
+  state.people.forEach(p => sel.appendChild(el("option", { value: p }, p)));
+  if (!state.selectedPerson) state.selectedPerson = state.people[0];
+  sel.value = state.selectedPerson;
+  controls.appendChild(sel);
+  main.appendChild(controls);
+
+  const personPicks = state.picks.filter(p => p.person === state.selectedPerson);
+  const t = tally(personPicks);
+
+  const stats = el("div", { class: "stat-grid" },
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Total Picks"), el("div", { class: "stat-value" }, String(t.total))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit"), el("div", { class: "stat-value" }, String(t.hit))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Meh"), el("div", { class: "stat-value" }, String(t.meh))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Miss"), el("div", { class: "stat-value" }, String(t.miss))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit %"), el("div", { class: "stat-value" }, formatPct(t.hit, t.graded))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Hit + Meh %"), el("div", { class: "stat-value" }, formatPct(t.hit + t.meh, t.graded))),
+  );
+  main.appendChild(stats);
+
+  const yearsForPerson = uniqueSorted(personPicks.map(p => p.year)).reverse();
+  const card = el("div", { class: "card" });
+  card.appendChild(el("h2", {}, state.selectedPerson + "'s Picks"));
+  yearsForPerson.forEach(y => {
+    const yp = personPicks.filter(p => p.year === y);
+    const ty = tally(yp);
+    card.appendChild(el("div", { class: "round-header" },
+      y + "  ·  " + ty.hit + "H / " + ty.meh + "M / " + ty.miss + "X" +
+      (ty.graded ? "  ·  " + formatPct(ty.hit, ty.graded) : "")
+    ));
+    yp.forEach(p => {
+      const row = el("div", { class: "pick-row" },
+        el("div", { class: "pick-person" }, p.slot || "—"),
+        el("div", { class: "pick-player" }, p.player || el("span", { class: "pct" }, "—")),
+        el("div", { class: "pick-result " + resultClass(p.result) }, p.result || "Pending"),
+      );
+      card.appendChild(row);
+    });
+  });
+  main.appendChild(card);
+}
+
+function renderLeaderboard() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+
+  const card = el("div", { class: "card" }, el("h2", {}, "All-Time Hit Rates"));
+  const table = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Drafter"),
+      el("th", { class: "num" }, "Picks"),
+      el("th", { class: "num" }, "Hit"),
+      el("th", { class: "num" }, "Meh"),
+      el("th", { class: "num" }, "Miss"),
+      sortHeader("Hit %", "hitPct", state.leaderboardSort, () => { toggleSort(state.leaderboardSort, "hitPct"); render(); }),
+      sortHeader("Hit + Meh", "hmPct", state.leaderboardSort, () => { toggleSort(state.leaderboardSort, "hmPct"); render(); }),
+      el("th", {}, "Mix"),
+    )),
+  );
+  const tbody = el("tbody", {});
+  const ranked = state.people
+    .map(p => {
+      const t = tally(state.picks.filter(x => x.person === p));
+      return { person: p, t, hitPct: t.graded ? t.hit / t.graded : -1, hmPct: t.graded ? (t.hit + t.meh) / t.graded : -1 };
+    })
+    .filter(r => r.t.graded > 0);
+  const lsd = state.leaderboardSort.dir === "asc" ? 1 : -1;
+  ranked.sort((a, b) => lsd * (a[state.leaderboardSort.col] - b[state.leaderboardSort.col]));
+
+  ranked.forEach(r => {
+    tbody.appendChild(el("tr", {
+      style: "cursor:pointer",
+      onclick: () => { state.view = "person"; state.selectedPerson = r.person; setActiveTab("person"); render(); }
+    },
+      el("td", {}, r.person),
+      el("td", { class: "num" }, String(r.t.total)),
+      el("td", { class: "num" }, String(r.t.hit)),
+      el("td", { class: "num" }, String(r.t.meh)),
+      el("td", { class: "num" }, String(r.t.miss)),
+      el("td", { class: "num" }, formatPct(r.t.hit, r.t.graded)),
+      el("td", { class: "num" }, formatPct(r.t.hit + r.t.meh, r.t.graded)),
+      el("td", {}, renderBar(r.t)),
+    ));
+  });
+  table.appendChild(tbody);
+  card.appendChild(table);
+  main.appendChild(card);
+}
+
+function setActiveTab(view) {
+  document.querySelectorAll("nav.tabs button").forEach(b => {
+    b.classList.toggle("active", b.dataset.view === view);
+  });
+}
+
+function render() {
+  if (!state.picks.length) {
+    document.getElementById("main").innerHTML = '<div class="empty">No draft data available.</div>';
+    return;
+  }
+  switch (state.view) {
+    case "year": renderYearView(); break;
+    case "person": renderPersonView(); break;
+    case "leaderboard": renderLeaderboard(); break;
+    default: renderOverview();
+  }
+}
+
+function setStatus(kind, text) {
+  const dot = document.getElementById("statusDot");
+  const txt = document.getElementById("statusText");
+  dot.className = "status-dot" + (kind === "loading" ? " loading" : kind === "error" ? " error" : "");
+  txt.textContent = text;
+}
+
+window[CALLBACK_NAME] = function (resp) {
+  try {
+    if (!resp || resp.status !== "ok") throw new Error((resp && resp.status) || "bad response");
+    const rows = gvizTableToRows(resp.table);
+    const picks = extractPicks(rows);
+    state.picks = picks;
+    state.years = uniqueSorted(picks.map(p => p.year));
+    state.people = uniqueSorted(picks.map(p => p.person));
+    state.lastUpdated = new Date();
+    setStatus("ok", "Updated " + state.lastUpdated.toLocaleTimeString());
+    render();
+  } catch (e) {
+    console.error(e);
+    setStatus("error", "Failed: " + e.message);
+  }
+};
+
+function loadData() {
+  setStatus("loading", "Refreshing…");
+  const old = document.getElementById("gvizScript");
+  if (old) old.remove();
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?gid=${GID}&tqx=responseHandler:${CALLBACK_NAME}&headers=0&_=${Date.now()}`;
+  const s = document.createElement("script");
+  s.id = "gvizScript";
+  s.src = url;
+  s.onerror = () => setStatus("error", "Failed to load sheet");
+  document.head.appendChild(s);
+}
+
+document.querySelectorAll("nav.tabs button").forEach(b => {
+  b.addEventListener("click", () => {
+    state.view = b.dataset.view;
+    setActiveTab(state.view);
+    render();
+  });
+});
+document.getElementById("refreshBtn").addEventListener("click", loadData);
+
+loadData();
+setInterval(loadData, REFRESH_MS);
+</script>
+</body>
+</html>
