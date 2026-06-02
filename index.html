@@ -249,6 +249,7 @@
   }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   td.tight, th.tight { padding-left: 6px; padding-right: 6px; white-space: nowrap; width: 1%; }
+  td.gap-left, th.gap-left { padding-left: 24px; }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { color: var(--text); }
   th.sortable .arrow { margin-left: 4px; opacity: 0.6; }
@@ -361,11 +362,11 @@ function toggleSort(sortState, col) {
   }
 }
 
-function sortHeader(label, col, sortState, onClick) {
+function sortHeader(label, col, sortState, onClick, extraClass) {
   const active = sortState.col === col;
   const arrow = active ? (sortState.dir === "asc" ? "▲" : "▼") : "";
   return el("th", {
-    class: "num tight sortable" + (active ? " active" : ""),
+    class: "num tight sortable" + (active ? " active" : "") + (extraClass ? " " + extraClass : ""),
     onclick: onClick,
   }, label, arrow ? el("span", { class: "arrow" }, arrow) : "");
 }
@@ -580,10 +581,10 @@ function renderOverview() {
     el("thead", {}, el("tr", {},
       el("th", {}, "Year"),
       el("th", { class: "num" }, "Picks"),
-      el("th", { class: "num" }, "Hit"),
-      el("th", { class: "num" }, "Meh"),
-      el("th", { class: "num" }, "Miss"),
-      sortHeader("Hit %", "hitPct", state.overviewSort, () => { toggleSort(state.overviewSort, "hitPct"); render(); }),
+      el("th", { class: "num tight" }, "Hit"),
+      el("th", { class: "num tight" }, "Meh"),
+      el("th", { class: "num tight" }, "Miss"),
+      sortHeader("Hit %", "hitPct", state.overviewSort, () => { toggleSort(state.overviewSort, "hitPct"); render(); }, "gap-left"),
       sortHeader("Hit + Meh", "hmPct", state.overviewSort, () => { toggleSort(state.overviewSort, "hmPct"); render(); }),
       el("th", {}, "Result"),
     ))
@@ -604,10 +605,10 @@ function renderOverview() {
     },
       el("td", {}, String(y)),
       el("td", { class: "num" }, String(t.total)),
-      el("td", { class: "num" }, String(t.hit)),
-      el("td", { class: "num" }, String(t.meh)),
-      el("td", { class: "num" }, String(t.miss)),
-      el("td", { class: "num tight" }, formatPct(t.hit, t.graded)),
+      el("td", { class: "num tight" }, String(t.hit)),
+      el("td", { class: "num tight" }, String(t.meh)),
+      el("td", { class: "num tight" }, String(t.miss)),
+      el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
       el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
       el("td", {}, renderBar(t)),
     );
@@ -729,10 +730,10 @@ function renderLeaderboard() {
     el("thead", {}, el("tr", {},
       el("th", {}, "Drafter"),
       el("th", { class: "num" }, "Picks"),
-      el("th", { class: "num" }, "Hit"),
-      el("th", { class: "num" }, "Meh"),
-      el("th", { class: "num" }, "Miss"),
-      sortHeader("Hit %", "hitPct", state.leaderboardSort, () => { toggleSort(state.leaderboardSort, "hitPct"); render(); }),
+      el("th", { class: "num tight" }, "Hit"),
+      el("th", { class: "num tight" }, "Meh"),
+      el("th", { class: "num tight" }, "Miss"),
+      sortHeader("Hit %", "hitPct", state.leaderboardSort, () => { toggleSort(state.leaderboardSort, "hitPct"); render(); }, "gap-left"),
       sortHeader("Hit + Meh", "hmPct", state.leaderboardSort, () => { toggleSort(state.leaderboardSort, "hmPct"); render(); }),
       el("th", {}, "Mix"),
     )),
@@ -762,10 +763,10 @@ function renderLeaderboard() {
     },
       el("td", {}, r.person),
       el("td", { class: "num" }, String(r.t.total)),
-      el("td", { class: "num" }, String(r.t.hit)),
-      el("td", { class: "num" }, String(r.t.meh)),
-      el("td", { class: "num" }, String(r.t.miss)),
-      el("td", { class: "num tight" }, formatPct(r.t.hit, r.t.graded)),
+      el("td", { class: "num tight" }, String(r.t.hit)),
+      el("td", { class: "num tight" }, String(r.t.meh)),
+      el("td", { class: "num tight" }, String(r.t.miss)),
+      el("td", { class: "num tight gap-left" }, formatPct(r.t.hit, r.t.graded)),
       el("td", { class: "num tight" }, formatPct(r.t.hit + r.t.meh, r.t.graded)),
       el("td", {}, renderBar(r.t)),
     ));
