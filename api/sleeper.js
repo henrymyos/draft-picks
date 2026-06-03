@@ -27,9 +27,17 @@ async function fetchSeason(lg) {
   ]);
 
   const draftsWithPicks = await Promise.all(drafts.map(async d => {
-    if (d.status !== "complete") return { ...d, picks: [] };
-    const picks = await get(`/draft/${d.draft_id}/picks`).catch(() => []);
-    return { ...d, picks };
+    const [full, picks] = await Promise.all([
+      get(`/draft/${d.draft_id}`).catch(() => d),
+      d.status === "complete"
+        ? get(`/draft/${d.draft_id}/picks`).catch(() => [])
+        : Promise.resolve([]),
+    ]);
+    return {
+      ...d,
+      slot_to_roster_id: full.slot_to_roster_id || {},
+      picks,
+    };
   }));
 
   const weekResults = await Promise.all(
@@ -107,6 +115,7 @@ export default async function handler(req, res) {
         type: d.type,
         status: d.status,
         rounds: d.settings && d.settings.rounds,
+        slot_to_roster_id: d.slot_to_roster_id || {},
         picks: d.picks.map(p => ({
           round: p.round,
           pick_no: p.pick_no,
