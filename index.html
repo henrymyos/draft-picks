@@ -1605,7 +1605,7 @@ function renderStats() {
       const yr = parseInt(season.season, 10);
       acqMap[yr] = {};
       const slotMap = draft.slot_to_roster_id || {};
-      draft.picks.forEach(p => {
+      draft.picks.filter(p => p.round <= 3).forEach(p => {
         const slotStr = `${p.round}.${String(p.draft_slot).padStart(2, "0")}`;
         const nativeRoster = slotMap[p.draft_slot];
         const drafterRoster = p.roster_id;
@@ -1697,7 +1697,7 @@ function renderStats() {
       const half = Math.floor(standings.length / 2);
       const topRosters = new Set(standings.slice(0, half).map(r => r.roster_id));
       const bottomRosters = new Set(standings.slice(-half).map(r => r.roster_id));
-      draft.picks.forEach(p => {
+      draft.picks.filter(p => p.round <= 3).forEach(p => {
         const sp = state.sleeper.players[p.player_id];
         if (!sp || !POSITIONS.includes(sp.position)) return;
         const targetBucket = topRosters.has(p.roster_id) ? "top"
@@ -1762,7 +1762,7 @@ function renderStats() {
     state.sleeper.seasons.forEach(season => {
       const draft = rookieDraftFor(season);
       if (!draft) return;
-      draft.picks.forEach(p => {
+      draft.picks.filter(p => p.round <= 3).forEach(p => {
         const v = state.values.players[p.player_id];
         if (!v) return;
         const slotStr = `${p.round}.${String(p.draft_slot).padStart(2, "0")}`;
