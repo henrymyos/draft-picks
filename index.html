@@ -337,6 +337,74 @@
   }
   tr.pos-sub td { color: var(--muted); }
 
+  .pos-chip {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .pos-qb { background: rgba(224,102,102,0.18); color: #f08585; }
+  .pos-rb { background: rgba(106,168,79,0.18); color: #8bc46c; }
+  .pos-wr { background: rgba(60,120,216,0.18); color: #6da3ed; }
+  .pos-te { background: rgba(246,178,107,0.18); color: #f6c084; }
+  .pos-other { background: var(--panel-2); color: var(--muted); }
+
+  .trade-block {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 12px;
+    background: rgba(255,255,255,0.015);
+  }
+  .trade-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .trade-date { font-weight: 600; }
+  .trade-meta { color: var(--muted); font-size: 13px; }
+  .trade-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .trade-col {
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 10px;
+  }
+  .trade-col-label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }
+  .trade-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 14px;
+    flex-wrap: wrap;
+  }
+  .trade-player { font-weight: 500; }
+  .trade-where { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .trade-empty { color: var(--muted); font-style: italic; font-size: 13px; }
+
+  @media (max-width: 640px) {
+    .trade-cols { grid-template-columns: 1fr; }
+    .trade-where { margin-left: 0; }
+    .trade-header { flex-direction: column; gap: 4px; }
+  }
+
   /* ---------- Mobile ---------- */
   @media (max-width: 640px) {
     header { padding: 10px 14px; }
@@ -427,6 +495,8 @@
     <button data-view="person">By Person</button>
     <button data-view="leaderboard">Leaderboard</button>
     <button data-view="stats">Stats</button>
+    <button data-view="drafts">Drafts</button>
+    <button data-view="trades">Trades</button>
   </nav>
 </header>
 <main id="main">
@@ -479,6 +549,11 @@ let state = {
   leaderboardSort: { col: "hitPct", dir: "desc" },
   leaderboardRound: null,
   statsRound: null,
+  sleeper: null,            // {seasons, players}
+  sleeperLoading: false,
+  sleeperError: null,
+  draftsSeason: null,
+  tradesUserId: null,
 };
 
 function rgbToHex(bg) {
@@ -1060,6 +1135,301 @@ function renderStats() {
   main.appendChild(posCard);
 }
 
+// ---------- Sleeper integration ----------
+async function loadSleeper(force = false) {
+  if (state.sleeperLoading) return;
+  if (state.sleeper && !force) return;
+  state.sleeperLoading = true;
+  state.sleeperError = null;
+  render();
+  try {
+    const res = await fetch("/api/sleeper" + (force ? "?_=" + Date.now() : ""), { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    state.sleeper = data;
+  } catch (e) {
+    state.sleeperError = e.message;
+  } finally {
+    state.sleeperLoading = false;
+    render();
+  }
+}
+
+function ensureSleeperLoaded() {
+  if (!state.sleeper && !state.sleeperLoading && !state.sleeperError) loadSleeper();
+}
+
+function rosterToOwner(season, rosterId) {
+  if (!season || rosterId == null) return null;
+  const r = season.rosters.find(x => x.roster_id === rosterId);
+  if (!r) return null;
+  return season.users.find(u => u.user_id === r.owner_id) || null;
+}
+function userDisplay(user) {
+  if (!user) return "—";
+  return user.team_name || user.display_name || user.user_id;
+}
+function fmtDate(ms) {
+  if (!ms) return "—";
+  const d = new Date(ms);
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+function positionClass(pos) {
+  switch (pos) {
+    case "QB": return "pos-qb";
+    case "RB": return "pos-rb";
+    case "WR": return "pos-wr";
+    case "TE": return "pos-te";
+    default: return "pos-other";
+  }
+}
+
+function renderDrafts() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  ensureSleeperLoaded();
+
+  if (state.sleeperLoading) {
+    main.appendChild(el("div", { class: "empty" }, "Loading from Sleeper…"));
+    return;
+  }
+  if (state.sleeperError) {
+    main.appendChild(el("div", { class: "empty" }, "Sleeper error: " + state.sleeperError));
+    return;
+  }
+  if (!state.sleeper) {
+    main.appendChild(el("div", { class: "empty" }, "No Sleeper data."));
+    return;
+  }
+
+  const { seasons, players } = state.sleeper;
+  const seasonsWithDrafts = seasons.filter(s => s.drafts.length);
+  if (!seasonsWithDrafts.length) {
+    main.appendChild(el("div", { class: "empty" }, "No drafts in Sleeper."));
+    return;
+  }
+
+  if (state.draftsSeason == null) state.draftsSeason = seasonsWithDrafts[seasonsWithDrafts.length - 1].season;
+  const seasonOpts = seasonsWithDrafts.slice().reverse().map(s => ({ value: s.season, label: s.season }));
+  const controls = el("div", { class: "controls" });
+  controls.appendChild(customSelect(seasonOpts, state.draftsSeason, v => {
+    state.draftsSeason = v;
+    render();
+  }));
+  main.appendChild(controls);
+
+  const season = seasonsWithDrafts.find(s => s.season === state.draftsSeason);
+  if (!season) return;
+
+  // Sort drafts: completed before pre-draft, smaller rounds last (rookie draft first)
+  const drafts = season.drafts.slice().sort((a, b) => {
+    if (a.status === "complete" && b.status !== "complete") return -1;
+    if (b.status === "complete" && a.status !== "complete") return 1;
+    return (a.rounds || 99) - (b.rounds || 99);
+  });
+
+  drafts.forEach(draft => {
+    const label = `${season.season} · ${draft.rounds || "?"}-round ${draft.type}` +
+      (draft.status !== "complete" ? " (pre-draft)" : "");
+    const card = el("div", { class: "card" }, el("h2", {}, label));
+
+    if (!draft.picks.length) {
+      card.appendChild(el("div", { class: "empty" }, "Draft hasn't started yet."));
+      main.appendChild(card);
+      return;
+    }
+
+    const byRound = {};
+    draft.picks.forEach(p => {
+      (byRound[p.round] = byRound[p.round] || []).push(p);
+    });
+    Object.keys(byRound).sort((a, b) => parseInt(a) - parseInt(b)).forEach(rd => {
+      card.appendChild(el("div", { class: "round-header" }, "Round " + rd));
+      byRound[rd].sort((a, b) => a.pick_no - b.pick_no).forEach(p => {
+        const owner = rosterToOwner(season, p.roster_id);
+        const player = players[p.player_id];
+        const slot = `${p.round}.${String(p.draft_slot).padStart(2, "0")}`;
+        card.appendChild(el("div", { class: "pick-row with-slot" },
+          el("div", { class: "pick-person" }, userDisplay(owner)),
+          el("div", { class: "pick-slot" }, slot),
+          el("div", { class: "pick-player" },
+            player ? player.name : ("Player " + p.player_id),
+            player && player.position
+              ? el("span", { class: "pos-chip " + positionClass(player.position), style: "margin-left:8px" }, player.position)
+              : null,
+          ),
+          el("div", { class: "pick-result result-pending" }, p.is_keeper ? "Keeper" : "Pick"),
+        ));
+      });
+    });
+    main.appendChild(card);
+  });
+}
+
+function renderTrades() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  ensureSleeperLoaded();
+
+  if (state.sleeperLoading) {
+    main.appendChild(el("div", { class: "empty" }, "Loading from Sleeper…"));
+    return;
+  }
+  if (state.sleeperError) {
+    main.appendChild(el("div", { class: "empty" }, "Sleeper error: " + state.sleeperError));
+    return;
+  }
+  if (!state.sleeper) {
+    main.appendChild(el("div", { class: "empty" }, "No Sleeper data."));
+    return;
+  }
+
+  const { seasons, players } = state.sleeper;
+  // Use the current (latest) season's users as the canonical roster of managers
+  const currentSeason = seasons[seasons.length - 1];
+  const allUsers = currentSeason.users.slice().sort((a, b) => userDisplay(a).localeCompare(userDisplay(b)));
+
+  if (state.tradesUserId == null && allUsers.length) state.tradesUserId = allUsers[0].user_id;
+
+  const userOpts = allUsers.map(u => ({ value: u.user_id, label: userDisplay(u) }));
+  const controls = el("div", { class: "controls" });
+  controls.appendChild(customSelect(userOpts, state.tradesUserId, v => {
+    state.tradesUserId = v;
+    render();
+  }));
+  main.appendChild(controls);
+
+  const selectedUser = allUsers.find(u => u.user_id === state.tradesUserId);
+
+  // Build a flat list of trades this user was involved in across all seasons.
+  // For each season, map user_id -> roster_id in that season.
+  const userTrades = [];
+  seasons.forEach(season => {
+    const myRoster = season.rosters.find(r => r.owner_id === state.tradesUserId);
+    if (!myRoster) return;
+    const myRosterId = myRoster.roster_id;
+    season.trades.forEach(t => {
+      if (!t.roster_ids.includes(myRosterId)) return;
+      userTrades.push({ season, trade: t, myRosterId });
+    });
+  });
+  userTrades.sort((a, b) => b.trade.created - a.trade.created);
+
+  // Summary stats
+  let playersReceived = 0, playersSent = 0, picksReceived = 0, picksSent = 0;
+  userTrades.forEach(({ trade, myRosterId }) => {
+    Object.entries(trade.adds).forEach(([, rid]) => { if (rid === myRosterId) playersReceived++; });
+    Object.entries(trade.drops).forEach(([, rid]) => { if (rid === myRosterId) playersSent++; });
+    trade.draft_picks.forEach(dp => {
+      if (dp.owner_id === myRosterId) picksReceived++;
+      if (dp.previous_owner_id === myRosterId) picksSent++;
+    });
+  });
+  const stats = el("div", { class: "stat-grid" },
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Trades"), el("div", { class: "stat-value" }, String(userTrades.length))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Players In"), el("div", { class: "stat-value" }, String(playersReceived))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Players Out"), el("div", { class: "stat-value" }, String(playersSent))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Picks In"), el("div", { class: "stat-value" }, String(picksReceived))),
+    el("div", { class: "stat" }, el("div", { class: "stat-label" }, "Picks Out"), el("div", { class: "stat-value" }, String(picksSent))),
+  );
+  main.appendChild(stats);
+
+  const card = el("div", { class: "card" }, el("h2", {}, userDisplay(selectedUser) + " — Trade History"));
+
+  if (!userTrades.length) {
+    card.appendChild(el("div", { class: "empty" }, "No trades found for this manager."));
+    main.appendChild(card);
+    return;
+  }
+
+  // Build an index: player_id -> current roster_id (in current season)
+  const currentPlayerOwner = {};
+  currentSeason.rosters.forEach(r => (r.players || []).forEach(pid => { currentPlayerOwner[pid] = r.roster_id; }));
+
+  userTrades.forEach(({ season, trade, myRosterId }) => {
+    const otherRosterIds = trade.roster_ids.filter(r => r !== myRosterId);
+    const otherNames = otherRosterIds.map(rid => userDisplay(rosterToOwner(season, rid))).join(", ");
+
+    const block = el("div", { class: "trade-block" });
+    block.appendChild(el("div", { class: "trade-header" },
+      el("span", { class: "trade-date" }, fmtDate(trade.created)),
+      el("span", { class: "trade-meta" }, season.season + " season  ·  with " + (otherNames || "—")),
+    ));
+
+    const cols = el("div", { class: "trade-cols" });
+    const received = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, "Received"));
+    const sent = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, "Sent"));
+
+    // Players
+    Object.entries(trade.adds).forEach(([pid, rid]) => {
+      if (rid !== myRosterId) return;
+      received.appendChild(renderTradePlayerLine(pid, players, currentSeason, currentPlayerOwner));
+    });
+    Object.entries(trade.drops).forEach(([pid, rid]) => {
+      if (rid !== myRosterId) return;
+      sent.appendChild(renderTradePlayerLine(pid, players, currentSeason, currentPlayerOwner));
+    });
+
+    // Picks
+    trade.draft_picks.forEach(dp => {
+      if (dp.owner_id === myRosterId) {
+        received.appendChild(renderTradePickLine(dp, season, seasons));
+      }
+      if (dp.previous_owner_id === myRosterId) {
+        sent.appendChild(renderTradePickLine(dp, season, seasons));
+      }
+    });
+
+    if (!received.children.length || received.children.length === 1) {
+      received.appendChild(el("div", { class: "trade-empty" }, "—"));
+    }
+    if (!sent.children.length || sent.children.length === 1) {
+      sent.appendChild(el("div", { class: "trade-empty" }, "—"));
+    }
+    cols.appendChild(received);
+    cols.appendChild(sent);
+    block.appendChild(cols);
+    card.appendChild(block);
+  });
+
+  main.appendChild(card);
+}
+
+function renderTradePlayerLine(pid, players, currentSeason, currentPlayerOwner) {
+  const p = players[pid];
+  const line = el("div", { class: "trade-line" });
+  if (p) {
+    line.appendChild(el("span", { class: "trade-player" }, p.name));
+    if (p.position) {
+      line.appendChild(el("span", { class: "pos-chip " + positionClass(p.position) }, p.position));
+    }
+    const ownerRosterId = currentPlayerOwner[pid];
+    if (ownerRosterId) {
+      const o = rosterToOwner(currentSeason, ownerRosterId);
+      line.appendChild(el("span", { class: "trade-where" }, "now: " + userDisplay(o)));
+    } else {
+      line.appendChild(el("span", { class: "trade-where" }, "no longer rostered"));
+    }
+  } else {
+    line.appendChild(el("span", { class: "trade-player" }, "Player " + pid));
+  }
+  return line;
+}
+
+function renderTradePickLine(dp, currentSeason, allSeasons) {
+  const seasonOfPick = allSeasons.find(s => s.season === dp.season);
+  const original = seasonOfPick ? rosterToOwner(seasonOfPick, dp.roster_id) : null;
+  const line = el("div", { class: "trade-line" });
+  line.appendChild(el("span", { class: "trade-player" },
+    `${dp.season} Round ${dp.round} pick`
+  ));
+  if (original) {
+    line.appendChild(el("span", { class: "trade-where" }, "originally " + userDisplay(original)));
+  }
+  return line;
+}
+
 function setActiveTab(view) {
   document.querySelectorAll("nav.tabs button").forEach(b => {
     b.classList.toggle("active", b.dataset.view === view);
@@ -1076,6 +1446,8 @@ function render() {
     case "person": renderPersonView(); break;
     case "leaderboard": renderLeaderboard(); break;
     case "stats": renderStats(); break;
+    case "drafts": renderDrafts(); break;
+    case "trades": renderTrades(); break;
     default: renderOverview();
   }
 }
