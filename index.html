@@ -1941,13 +1941,25 @@ function rookieDraftFor(season) {
   return completed.slice().sort((a, b) => (a.created || 0) - (b.created || 0))[0];
 }
 
-// Manual merges for owners whose team passed through multiple Sleeper accounts
-// over the years. Map any of the listed display names to the canonical label.
+// Map every Sleeper team display name (across all seasons) to the matching
+// person's name from the sheet, so owners line up with the existing
+// Leaderboard / By Person data.
 const OWNER_NAME_MERGES = {
-  "Mother Theresa's Child": "TryingToSuckAtTryingToLose",
-  "TryingToSuckAtTryingToLose": "TryingToSuckAtTryingToLose",
-  "daynamyos": "ChampaignTornadoes",
-  "ChampaignTornadoes": "ChampaignTornadoes",
+  "Galactic Empire": "Henry",
+  "Bob's Dynasty": "Ethan",
+  "28AllDay": "Seth",
+  "Huntrix Dad": "Jake",
+  "Pint-Sized": "Isaac",
+  "Beat My Kids": "Dad",
+  "ChampaignTornadoes": "Joseph",
+  "daynamyos": "Joseph",
+  "Simon3y": "Simon",
+  "Mother Theresa": "Paige",
+  "Mother Theresa's Child": "Paige",
+  "TryingToSuckAtTryingToLose": "Paige",
+  "The Bedouin": "Jacques",
+  "Revenge of the Roofers": "Charlie",
+  "QB camp": "John",
 };
 function canonicalOwnerName(name) {
   return (name && OWNER_NAME_MERGES[name]) || name;
