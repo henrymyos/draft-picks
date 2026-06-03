@@ -555,6 +555,7 @@ let state = {
   leaderboardSort: { col: "hitPct", dir: "desc" },
   leaderboardRound: null,
   statsRound: null,
+  statsInsightDrafter: null,
   sleeper: null,            // {seasons, players}
   sleeperLoading: false,
   sleeperError: null,
@@ -1003,6 +1004,37 @@ function renderLeaderboard() {
   main.appendChild(card);
 }
 
+// Picks ordered chronologically per drafter (year, then by global pick number in the draft)
+function picksSequenceByDrafter(picks) {
+  const groups = {};
+  picks.forEach(p => {
+    if (!p.player || !p.round || !p.pickInRound) return;
+    (groups[p.person] = groups[p.person] || []).push(p);
+  });
+  Object.values(groups).forEach(arr => arr.sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    return ((a.round - 1) * 12 + a.pickInRound) - ((b.round - 1) * 12 + b.pickInRound);
+  }));
+  return groups;
+}
+
+// All picks across the league in global draft order
+function picksInDraftOrder(picks) {
+  return picks.slice()
+    .filter(p => p.player && p.round && p.pickInRound)
+    .sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return ((a.round - 1) * 12 + a.pickInRound) - ((b.round - 1) * 12 + b.pickInRound);
+    });
+}
+
+function tierOfPickInRound(pir) {
+  if (!pir) return null;
+  if (pir <= 4) return "Early";
+  if (pir <= 8) return "Mid";
+  return "Late";
+}
+
 function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
@@ -1207,12 +1239,7 @@ function renderStats() {
       ];
     }
 
-    function tierOfPick(pir) {
-      if (!pir) return null;
-      if (pir <= 4) return "Early";
-      if (pir <= 8) return "Mid";
-      return "Late";
-    }
+    const tierOfPick = tierOfPickInRound;
 
     ["QB", "RB", "WR", "TE"].forEach(pos => {
       const all = posPicks.filter(p => p.pos === pos);
@@ -1247,6 +1274,283 @@ function renderStats() {
     posCard.appendChild(posTable);
   }
   main.appendChild(posCard);
+
+  // ----- Card: Drafter × Position × Tier -----
+  const insightCard = el("div", { class: "card" }, el("h2", {}, "Drafter Insight: Position × Tier"));
+  const insightControls = el("div", { class: "controls" });
+  const drafterOpts = state.people.map(p => ({ value: p, label: p }));
+  if (state.statsInsightDrafter == null && drafterOpts.length) state.statsInsightDrafter = drafterOpts[0].value;
+  insightControls.appendChild(customSelect(drafterOpts, state.statsInsightDrafter, v => {
+    state.statsInsightDrafter = v;
+    render();
+  }));
+  insightCard.appendChild(insightControls);
+
+  if (state.statsInsightDrafter) {
+    const drafterPicks = state.picks.filter(p => p.person === state.statsInsightDrafter && p.pos);
+    const itable = el("table", {},
+      el("thead", {}, el("tr", {},
+        el("th", {}, "Position"),
+        el("th", { class: "num tight" }, "Early"),
+        el("th", { class: "num tight" }, "Mid"),
+        el("th", { class: "num tight" }, "Late"),
+        el("th", { class: "num tight gap-left" }, "Total"),
+      )),
+    );
+    const itbody = el("tbody", {});
+    function cellFor(picks) {
+      const t = tally(picks);
+      if (!t.graded) return el("td", { class: "num tight" }, "—");
+      return el("td", { class: "num tight" },
+        formatPct(t.hit, t.graded),
+        el("span", { class: "pct", style: "margin-left:6px" }, "(" + t.total + ")"),
+      );
+    }
+    function cellForGap(picks) {
+      const t = tally(picks);
+      if (!t.graded) return el("td", { class: "num tight gap-left" }, "—");
+      return el("td", { class: "num tight gap-left" },
+        formatPct(t.hit, t.graded),
+        el("span", { class: "pct", style: "margin-left:6px" }, "(" + t.total + ")"),
+      );
+    }
+    ["QB", "RB", "WR", "TE"].forEach(pos => {
+      const posPicks = drafterPicks.filter(p => p.pos === pos);
+      if (!posPicks.length) return;
+      itbody.appendChild(el("tr", {},
+        el("td", {},
+          el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+          pos
+        ),
+        cellFor(posPicks.filter(p => tierOfPickInRound(p.pickInRound) === "Early")),
+        cellFor(posPicks.filter(p => tierOfPickInRound(p.pickInRound) === "Mid")),
+        cellFor(posPicks.filter(p => tierOfPickInRound(p.pickInRound) === "Late")),
+        cellForGap(posPicks),
+      ));
+    });
+    itable.appendChild(itbody);
+    insightCard.appendChild(itable);
+    insightCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+      "Hit % per cell, pick count in parens. Tiers span all 3 rounds (Early = .01–.04, Mid = .05–.08, Late = .09–.12)."
+    ));
+  }
+  main.appendChild(insightCard);
+
+  // ----- Card: Year Strength -----
+  const ysCard = el("div", { class: "card" }, el("h2", {}, "Year Strength"));
+  const overall = tally(state.picks.filter(p => p.round));
+  const overallHit = overall.graded ? overall.hit / overall.graded : 0;
+  const overallHM = overall.graded ? (overall.hit + overall.meh) / overall.graded : 0;
+  const ysTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Year"),
+      el("th", { class: "num" }, "Picks"),
+      el("th", { class: "num tight" }, "Hit %"),
+      el("th", { class: "num tight" }, "Hit + Meh"),
+      el("th", { class: "num tight gap-left" }, "Δ vs Avg"),
+      el("th", {}, ""),
+    )),
+  );
+  const ysBody = el("tbody", {});
+  state.years.slice().sort((a, b) => a - b).forEach(y => {
+    const yp = state.picks.filter(p => p.year === y && p.round);
+    const t = tally(yp);
+    if (!t.graded) return;
+    const hp = t.hit / t.graded;
+    const delta = hp - overallHit;
+    const label = delta >= 0.05 ? "Strong" : delta <= -0.05 ? "Weak" : "Average";
+    ysBody.appendChild(el("tr", {},
+      el("td", {}, String(y)),
+      el("td", { class: "num" }, String(t.total)),
+      el("td", { class: "num tight" }, formatPct(t.hit, t.graded)),
+      el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
+      el("td", { class: "num tight gap-left" }, (delta >= 0 ? "+" : "") + (delta * 100).toFixed(1) + "%"),
+      el("td", { class: "pct" }, label),
+    ));
+  });
+  ysBody.appendChild(el("tr", { class: "pos-total" },
+    el("td", {}, "League Avg"),
+    el("td", { class: "num" }, String(overall.total)),
+    el("td", { class: "num tight" }, formatPct(overall.hit, overall.graded)),
+    el("td", { class: "num tight" }, formatPct(overall.hit + overall.meh, overall.graded)),
+    el("td", { class: "num tight gap-left" }, "—"),
+    el("td", {}, ""),
+  ));
+  ysTable.appendChild(ysBody);
+  ysCard.appendChild(ysTable);
+  main.appendChild(ysCard);
+
+  // ----- Card: Conditional Probability (after Hit/Meh/Miss) -----
+  const cpCard = el("div", { class: "card" }, el("h2", {}, "What Comes Next (Conditional Hit Rates)"));
+  const seqByDrafter = picksSequenceByDrafter(state.picks);
+  const buckets = { hit: [], meh: [], miss: [], miss2: [], hit2: [] };
+  Object.values(seqByDrafter).forEach(seq => {
+    for (let i = 1; i < seq.length; i++) {
+      const prev = seq[i - 1], cur = seq[i];
+      if (!cur.result) continue;
+      if (prev.result === "Hit") buckets.hit.push(cur);
+      else if (prev.result === "Meh") buckets.meh.push(cur);
+      else if (prev.result === "Miss") buckets.miss.push(cur);
+      if (i >= 2) {
+        const prev2 = seq[i - 2];
+        if (prev.result === "Miss" && prev2.result === "Miss") buckets.miss2.push(cur);
+        if (prev.result === "Hit" && prev2.result === "Hit") buckets.hit2.push(cur);
+      }
+    }
+  });
+  const cpTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Condition"),
+      el("th", { class: "num" }, "Samples"),
+      el("th", { class: "num tight gap-left" }, "Hit %"),
+      el("th", { class: "num tight" }, "Hit + Meh"),
+      el("th", { class: "num tight gap-left" }, "Δ vs Baseline"),
+    )),
+  );
+  const cpBody = el("tbody", {});
+  function cpRow(label, list) {
+    const t = tally(list);
+    if (!t.graded) return null;
+    const hp = t.hit / t.graded;
+    const d = hp - overallHit;
+    return el("tr", {},
+      el("td", {}, label),
+      el("td", { class: "num" }, String(t.total)),
+      el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
+      el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
+      el("td", { class: "num tight gap-left" }, (d >= 0 ? "+" : "") + (d * 100).toFixed(1) + "%"),
+    );
+  }
+  const baselineRow = el("tr", { class: "pos-total" },
+    el("td", {}, "Baseline (all picks)"),
+    el("td", { class: "num" }, String(overall.total)),
+    el("td", { class: "num tight gap-left" }, formatPct(overall.hit, overall.graded)),
+    el("td", { class: "num tight" }, formatPct(overall.hit + overall.meh, overall.graded)),
+    el("td", { class: "num tight gap-left" }, "—"),
+  );
+  cpBody.appendChild(baselineRow);
+  [
+    ["After a Hit", buckets.hit],
+    ["After a Meh", buckets.meh],
+    ["After a Miss", buckets.miss],
+    ["After 2 Hits in a row", buckets.hit2],
+    ["After 2 Misses in a row", buckets.miss2],
+  ].forEach(([label, list]) => {
+    const row = cpRow(label, list);
+    if (row) cpBody.appendChild(row);
+  });
+  cpTable.appendChild(cpBody);
+  cpCard.appendChild(cpTable);
+  cpCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "“Next” = the same drafter's next pick (across years, in draft order)."
+  ));
+  main.appendChild(cpCard);
+
+  // ----- Card: Position Run Effect -----
+  const runCard = el("div", { class: "card" }, el("h2", {}, "After a Position Run (3+ in a row)"));
+  const inOrder = picksInDraftOrder(state.picks);
+  const runStats = { QB: [], RB: [], WR: [], TE: [] };
+  let i = 0;
+  while (i < inOrder.length) {
+    const cur = inOrder[i];
+    if (!cur.pos || cur.year == null) { i++; continue; }
+    let j = i;
+    while (j < inOrder.length
+           && inOrder[j].year === cur.year
+           && inOrder[j].pos === cur.pos) j++;
+    const runLen = j - i;
+    if (runLen >= 3 && j < inOrder.length && inOrder[j].year === cur.year) {
+      runStats[cur.pos].push(inOrder[j]);
+    }
+    i = j;
+  }
+  const runTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Run Position"),
+      el("th", { class: "num" }, "Runs ≥ 3"),
+      el("th", { class: "num" }, "Next-Pick Samples"),
+      el("th", { class: "num tight gap-left" }, "Next Hit %"),
+      el("th", { class: "num tight" }, "Next Hit + Meh"),
+      el("th", { class: "num tight gap-left" }, "Δ vs Baseline"),
+    )),
+  );
+  const runBody = el("tbody", {});
+  ["QB", "RB", "WR", "TE"].forEach(pos => {
+    const list = runStats[pos];
+    const t = tally(list);
+    runBody.appendChild(el("tr", {},
+      el("td", {},
+        el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+        pos
+      ),
+      el("td", { class: "num" }, String(list.length)),
+      el("td", { class: "num" }, String(t.graded)),
+      el("td", { class: "num tight gap-left" }, t.graded ? formatPct(t.hit, t.graded) : "—"),
+      el("td", { class: "num tight" }, t.graded ? formatPct(t.hit + t.meh, t.graded) : "—"),
+      el("td", { class: "num tight gap-left" }, t.graded
+        ? ((t.hit / t.graded - overallHit) >= 0 ? "+" : "") + ((t.hit / t.graded - overallHit) * 100).toFixed(1) + "%"
+        : "—"),
+    ));
+  });
+  runTable.appendChild(runBody);
+  runCard.appendChild(runTable);
+  runCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Each run is 3+ consecutive picks at the same position (within a single draft). The next pick is always a different position by definition — this shows whether the pivot turned out well."
+  ));
+  main.appendChild(runCard);
+
+  // ----- Card: Sweet Spot per Position -----
+  const sweetCard = el("div", { class: "card" }, el("h2", {}, "Sweet Spot per Position"));
+  const sweetTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Position"),
+      el("th", {}, "Best Slots"),
+      el("th", {}, "Worst Slot"),
+      el("th", { class: "num" }, "Sample"),
+    )),
+  );
+  const sweetBody = el("tbody", {});
+  ["QB", "RB", "WR", "TE"].forEach(pos => {
+    const posPicks = state.picks.filter(p => p.pos === pos && p.slot);
+    const bySlot = {};
+    posPicks.forEach(p => (bySlot[p.slot] = bySlot[p.slot] || []).push(p));
+    const slotStats = Object.entries(bySlot)
+      .map(([slot, picks]) => ({ slot, t: tally(picks) }))
+      .filter(r => r.t.graded >= 2)
+      .map(r => ({ slot: r.slot, hitPct: r.t.hit / r.t.graded, picks: r.t.total, t: r.t }));
+    if (!slotStats.length) {
+      sweetBody.appendChild(el("tr", {},
+        el("td", {},
+          el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+          pos
+        ),
+        el("td", { class: "pct" }, "not enough data"),
+        el("td", { class: "pct" }, "—"),
+        el("td", { class: "num" }, String(posPicks.length)),
+      ));
+      return;
+    }
+    slotStats.sort((a, b) => b.hitPct - a.hitPct);
+    const top = slotStats.slice(0, 3).map(s =>
+      `${s.slot} (${(s.hitPct * 100).toFixed(0)}%)`
+    ).join(", ");
+    const worst = slotStats[slotStats.length - 1];
+    sweetBody.appendChild(el("tr", {},
+      el("td", {},
+        el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+        pos
+      ),
+      el("td", {}, top),
+      el("td", {}, `${worst.slot} (${(worst.hitPct * 100).toFixed(0)}%)`),
+      el("td", { class: "num" }, String(posPicks.length)),
+    ));
+  });
+  sweetTable.appendChild(sweetBody);
+  sweetCard.appendChild(sweetTable);
+  sweetCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Only slots with 2+ picks at that position are considered. Hit % shown in parens."
+  ));
+  main.appendChild(sweetCard);
 }
 
 // ---------- Sleeper integration ----------
