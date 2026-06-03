@@ -336,6 +336,12 @@
     font-size: 13px;
   }
   tr.pos-sub td { color: var(--muted); }
+  tr.pos-tier td:first-child {
+    padding-left: 52px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  tr.pos-tier td { color: var(--muted); font-size: 12px; }
 
   .pos-chip {
     display: inline-block;
@@ -1201,6 +1207,13 @@ function renderStats() {
       ];
     }
 
+    function tierOfPick(pir) {
+      if (!pir) return null;
+      if (pir <= 4) return "Early";
+      if (pir <= 8) return "Mid";
+      return "Late";
+    }
+
     ["QB", "RB", "WR", "TE"].forEach(pos => {
       const all = posPicks.filter(p => p.pos === pos);
       if (!all.length) return;
@@ -1218,6 +1231,15 @@ function renderStats() {
           el("td", {}, "Round " + rd),
           ...statCells(tally(sub)),
         ));
+        ["Early", "Mid", "Late"].forEach(tier => {
+          const tierSub = sub.filter(p => tierOfPick(p.pickInRound) === tier);
+          if (!tierSub.length) return;
+          const slotRange = tier === "Early" ? "1-4" : tier === "Mid" ? "5-8" : "9-12";
+          ptbody.appendChild(el("tr", { class: "pos-tier" },
+            el("td", {}, `${tier} (${rd}.${slotRange})`),
+            ...statCells(tally(tierSub)),
+          ));
+        });
       });
     });
 
