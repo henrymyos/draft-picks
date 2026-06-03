@@ -1930,12 +1930,14 @@ function ensureValuesLoaded() {
 }
 
 // Pick the canonical rookie draft for a season: the first chronologically-created
-// complete 3-round draft. Startups (other round counts) and supplementals
-// created later are excluded — null means "this season has no rookie draft".
+// complete draft. Supplementals created later in the same year are excluded.
+// 2019 is the league's startup season (25-round draft), not a rookie draft we
+// want to analyze, so it returns null.
 function rookieDraftFor(season) {
   if (!season) return null;
+  if (season.season === "2019") return null;
   const completed = season.drafts.filter(d =>
-    d.status === "complete" && d.picks && d.picks.length && d.rounds === 3
+    d.status === "complete" && d.picks && d.picks.length
   );
   if (!completed.length) return null;
   return completed.slice().sort((a, b) => (a.created || 0) - (b.created || 0))[0];
