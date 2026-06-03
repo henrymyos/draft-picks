@@ -114,6 +114,7 @@ export default async function handler(req, res) {
         draft_id: d.draft_id,
         type: d.type,
         status: d.status,
+        created: d.created,
         rounds: d.settings && d.settings.rounds,
         slot_to_roster_id: d.slot_to_roster_id || {},
         picks: d.picks.map(p => ({

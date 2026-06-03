@@ -1329,9 +1329,11 @@ function renderTradePlayerLine(pid, players) {
 function resolvePickToPlayer(dp, allSeasons, players) {
   const season = allSeasons.find(s => s.season === dp.season);
   if (!season) return null;
-  // Prefer a completed draft with rounds >= dp.round
-  const draft = season.drafts.find(d => d.status === "complete" && (d.rounds || 0) >= dp.round
-    && d.picks && d.picks.length);
+  // Use the first chronologically-created complete draft that has enough rounds and any picks.
+  const draft = season.drafts
+    .filter(d => d.status === "complete" && (d.rounds || 0) >= dp.round && d.picks && d.picks.length)
+    .slice()
+    .sort((a, b) => (a.created || 0) - (b.created || 0))[0];
   if (!draft) return null;
   // Find the draft slot belonging to the original roster
   const slotEntry = Object.entries(draft.slot_to_roster_id || {})
