@@ -343,6 +343,51 @@
   }
   tr.pos-tier td { color: var(--muted); font-size: 12px; }
 
+  .section-header {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    font-weight: 600;
+    margin: 28px 4px 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-header:first-child { margin-top: 0; }
+  .section-header .section-sub {
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 400;
+    color: var(--muted);
+    margin-left: 12px;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+
+  .card-lede {
+    background: var(--panel-2);
+    border-left: 3px solid var(--accent);
+    padding: 8px 12px;
+    margin: -4px 0 14px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+  }
+  .card-lede strong { color: var(--accent); }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .pill-strong { background: rgba(46,160,67,0.18); color: var(--hit); }
+  .pill-weak { background: rgba(248,81,73,0.15); color: var(--miss); }
+  .pill-avg { background: var(--panel-2); color: var(--muted); }
+
   .surplus-list { display: flex; flex-direction: column; gap: 4px; }
   .surplus-row {
     display: grid;
@@ -1074,7 +1119,23 @@ function renderStats() {
   main.innerHTML = "";
 
   // ----- All-time round breakdown -----
+  main.appendChild(el("div", { class: "section-header" }, "League Overview",
+    el("span", { class: "section-sub" }, "How the league as a whole has drafted")));
   const roundCard = el("div", { class: "card" }, el("h2", {}, "By Round (all years)"));
+  {
+    const rounds = [1, 2, 3].map(rd => ({ rd, t: tally(state.picks.filter(p => p.round === rd)) }))
+      .filter(r => r.t.graded);
+    if (rounds.length >= 2) {
+      const sorted = rounds.slice().sort((a, b) => (b.t.hit / b.t.graded) - (a.t.hit / a.t.graded));
+      const best = sorted[0], worst = sorted[sorted.length - 1];
+      const gap = (best.t.hit / best.t.graded - worst.t.hit / worst.t.graded) * 100;
+      const lede = el("div", { class: "card-lede" });
+      lede.innerHTML = `Round <strong>${best.rd}</strong> hits ` +
+        `(${(best.t.hit / best.t.graded * 100).toFixed(1)}%); Round <strong>${worst.rd}</strong> doesn't ` +
+        `(${(worst.t.hit / worst.t.graded * 100).toFixed(1)}%). Gap: ${gap.toFixed(1)} points.`;
+      roundCard.appendChild(lede);
+    }
+  }
   const roundTable = el("table", {},
     el("thead", {}, el("tr", {},
       el("th", {}, "Round"),
@@ -1150,6 +1211,8 @@ function renderStats() {
   main.appendChild(matrixCard);
 
   // ----- Round tier breakdown (Early/Mid/Late within each round) -----
+  main.appendChild(el("div", { class: "section-header" }, "Slot & Position",
+    el("span", { class: "section-sub" }, "Where in the draft each position has paid off")));
   const tierCard = el("div", { class: "card" }, el("h2", {}, "By Round Tier"));
   const tierTable = el("table", {},
     el("thead", {}, el("tr", {},
@@ -1310,6 +1373,8 @@ function renderStats() {
   main.appendChild(posCard);
 
   // ----- Card: Drafter × Position × Tier -----
+  main.appendChild(el("div", { class: "section-header" }, "Drafter Behavior",
+    el("span", { class: "section-sub" }, "Per-drafter patterns and sequence effects")));
   const insightCard = el("div", { class: "card" }, el("h2", {}, "Drafter Insight: Position × Tier"));
   const insightControls = el("div", { class: "controls" });
   const drafterOpts = state.people.map(p => ({ value: p, label: p }));
@@ -1375,6 +1440,22 @@ function renderStats() {
   const overall = tally(state.picks.filter(p => p.round));
   const overallHit = overall.graded ? overall.hit / overall.graded : 0;
   const overallHM = overall.graded ? (overall.hit + overall.meh) / overall.graded : 0;
+  // Compute strongest and weakest years for lede
+  const yearStats = state.years
+    .map(y => {
+      const t = tally(state.picks.filter(p => p.year === y && p.round));
+      return { y, t, hp: t.graded ? t.hit / t.graded : 0 };
+    })
+    .filter(r => r.t.graded > 0);
+  if (yearStats.length >= 2) {
+    const sorted = yearStats.slice().sort((a, b) => b.hp - a.hp);
+    const best = sorted[0], worst = sorted[sorted.length - 1];
+    const lede = el("div", { class: "card-lede" });
+    lede.innerHTML = `<strong>${best.y}</strong> was the strongest class ` +
+      `(${(best.hp * 100).toFixed(1)}% hit). <strong>${worst.y}</strong> was the weakest ` +
+      `(${(worst.hp * 100).toFixed(1)}%). League average: ${(overallHit * 100).toFixed(1)}%.`;
+    ysCard.appendChild(lede);
+  }
   const ysTable = el("table", {},
     el("thead", {}, el("tr", {},
       el("th", {}, "Year"),
@@ -1393,13 +1474,17 @@ function renderStats() {
     const hp = t.hit / t.graded;
     const delta = hp - overallHit;
     const label = delta >= 0.05 ? "Strong" : delta <= -0.05 ? "Weak" : "Average";
+    const pillClass = delta >= 0.05 ? "pill pill-strong" : delta <= -0.05 ? "pill pill-weak" : "pill pill-avg";
     ysBody.appendChild(el("tr", {},
       el("td", {}, String(y)),
       el("td", { class: "num" }, String(t.total)),
       el("td", { class: "num tight" }, formatPct(t.hit, t.graded)),
       el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
-      el("td", { class: "num tight gap-left" }, (delta >= 0 ? "+" : "") + (delta * 100).toFixed(1) + "%"),
-      el("td", { class: "pct" }, label),
+      el("td", { class: "num tight gap-left" },
+        el("span", { class: delta >= 0 ? "delta-pos" : "delta-neg" },
+          (delta >= 0 ? "+" : "") + (delta * 100).toFixed(1) + "%"
+        )),
+      el("td", {}, el("span", { class: pillClass }, label)),
     ));
   });
   ysBody.appendChild(el("tr", { class: "pos-total" },
@@ -1452,7 +1537,10 @@ function renderStats() {
       el("td", { class: "num" }, String(t.total)),
       el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
       el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
-      el("td", { class: "num tight gap-left" }, (d >= 0 ? "+" : "") + (d * 100).toFixed(1) + "%"),
+      el("td", { class: "num tight gap-left" },
+        el("span", { class: d >= 0 ? "delta-pos" : "delta-neg" },
+          (d >= 0 ? "+" : "") + (d * 100).toFixed(1) + "%"
+        )),
     );
   }
   const baselineRow = el("tr", { class: "pos-total" },
@@ -1522,7 +1610,10 @@ function renderStats() {
       el("td", { class: "num tight gap-left" }, t.graded ? formatPct(t.hit, t.graded) : "—"),
       el("td", { class: "num tight" }, t.graded ? formatPct(t.hit + t.meh, t.graded) : "—"),
       el("td", { class: "num tight gap-left" }, t.graded
-        ? ((t.hit / t.graded - overallHit) >= 0 ? "+" : "") + ((t.hit / t.graded - overallHit) * 100).toFixed(1) + "%"
+        ? el("span", {
+            class: (t.hit / t.graded - overallHit) >= 0 ? "delta-pos" : "delta-neg",
+          }, ((t.hit / t.graded - overallHit) >= 0 ? "+" : "")
+             + ((t.hit / t.graded - overallHit) * 100).toFixed(1) + "%")
         : "—"),
     ));
   });
@@ -1591,6 +1682,8 @@ function renderStats() {
   ensureKtcLoaded();
 
   // ----- Card: Pick Acquisition (Native / Trade-up / Trade-down) -----
+  main.appendChild(el("div", { class: "section-header" }, "Strategy Signals",
+    el("span", { class: "section-sub" }, "Does trading, position mix, or beating consensus work?")));
   const paCard = el("div", { class: "card" }, el("h2", {}, "Pick Acquisition"));
   if (!state.sleeper) {
     paCard.appendChild(el("div", { class: "empty" },
@@ -1666,6 +1759,24 @@ function renderStats() {
       ));
     });
     paTable.appendChild(paBody);
+    // Lede: compare native vs trade-up hit rates
+    const tNative = tally(buckets.native);
+    const tUp = tally(buckets.up);
+    const tDown = tally(buckets.down);
+    if (tNative.graded && (tUp.graded || tDown.graded)) {
+      const nat = tNative.hit / tNative.graded;
+      let bestKind = null, bestPct = nat;
+      if (tUp.graded && tUp.hit / tUp.graded > bestPct) { bestKind = "trading up"; bestPct = tUp.hit / tUp.graded; }
+      if (tDown.graded && tDown.hit / tDown.graded > bestPct) { bestKind = "trading down"; bestPct = tDown.hit / tDown.graded; }
+      const lede = el("div", { class: "card-lede" });
+      if (bestKind) {
+        lede.innerHTML = `<strong>${bestKind}</strong> has the best hit rate (${(bestPct * 100).toFixed(1)}%), ` +
+          `vs ${(nat * 100).toFixed(1)}% on picks you didn't trade.`;
+      } else {
+        lede.innerHTML = `Native picks (${(nat * 100).toFixed(1)}% hit) outperform every traded-in bucket.`;
+      }
+      paCard.insertBefore(lede, paCard.firstChild.nextSibling);
+    }
     paCard.appendChild(paTable);
     paCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
       "Sleeper trades are matched to your sheet picks by year + slot. 'Up' means the drafter's natural slot was later than where they ended up picking."
@@ -1731,7 +1842,9 @@ function renderStats() {
           el("td", { class: "num tight" }, (tpc * 100).toFixed(0) + "%"),
           el("td", { class: "num tight" }, (bpc * 100).toFixed(0) + "%"),
           el("td", { class: "num tight gap-left" },
-            (delta >= 0 ? "+" : "") + (delta * 100).toFixed(0) + "%"),
+            el("span", { class: delta >= 0 ? "delta-pos" : "delta-neg" },
+              (delta >= 0 ? "+" : "") + (delta * 100).toFixed(0) + "%"
+            )),
         ));
       });
       rcTable.appendChild(rcBody);
@@ -1832,7 +1945,9 @@ function renderStats() {
             el("td", { class: "num tight" }, String(r.reaches)),
             el("td", { class: "num tight" }, String(r.steals)),
             el("td", { class: "num tight gap-left" },
-              (r.avgDiff >= 0 ? "+" : "") + r.avgDiff.toFixed(1)),
+              el("span", { class: r.avgDiff >= 0 ? "delta-pos" : "delta-neg" },
+                (r.avgDiff >= 0 ? "+" : "") + r.avgDiff.toFixed(1)
+              )),
           ));
         });
       adpTable.appendChild(adpBody);
