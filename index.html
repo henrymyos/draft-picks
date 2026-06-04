@@ -2308,10 +2308,10 @@ function renderTrades() {
     // Picks
     trade.draft_picks.forEach(dp => {
       if (dp.owner_id === myRosterId) {
-        received.appendChild(renderTradePickLine(dp, seasons, players));
+        received.appendChild(renderTradePickLine(dp, seasons, players, trade.created));
       }
       if (dp.previous_owner_id === myRosterId) {
-        sent.appendChild(renderTradePickLine(dp, seasons, players));
+        sent.appendChild(renderTradePickLine(dp, seasons, players, trade.created));
       }
     });
 
@@ -2366,11 +2366,13 @@ function resolvePickToPlayer(dp, allSeasons, players) {
   return { pick, player };
 }
 
-function renderTradePickLine(dp, allSeasons, players) {
+function renderTradePickLine(dp, allSeasons, players, tradeCreated) {
   const line = el("div", { class: "trade-line" });
   const seasonOfPick = allSeasons.find(s => s.season === dp.season);
 
-  // Try to find the actual draft slot if that season's draft has happened.
+  // Default to a round label; only collapse to the exact slot (e.g. 1.09)
+  // when the slot order was already locked in when the trade happened —
+  // i.e. the draft for that pick had already been configured.
   let slotLabel = `Round ${dp.round}`;
   let resolved = null;
   if (seasonOfPick) {
@@ -2379,11 +2381,15 @@ function renderTradePickLine(dp, allSeasons, players) {
       .slice()
       .sort((a, b) => (a.created || 0) - (b.created || 0))[0];
     if (draft) {
+      const slotKnownAtTrade = tradeCreated != null && draft.created != null
+        && tradeCreated >= draft.created;
       const slotEntry = Object.entries(draft.slot_to_roster_id || {})
         .find(([, rid]) => rid === dp.roster_id);
       if (slotEntry) {
         const slotNum = parseInt(slotEntry[0], 10);
-        slotLabel = `${dp.round}.${String(slotNum).padStart(2, "0")}`;
+        if (slotKnownAtTrade) {
+          slotLabel = `${dp.round}.${String(slotNum).padStart(2, "0")}`;
+        }
         const pick = draft.picks.find(p => p.round === dp.round && p.draft_slot === slotNum);
         if (pick) {
           const player = players[pick.player_id];
