@@ -33,11 +33,12 @@ export default async function handler(req, res) {
       return;
     }
 
-    const [draftFull, picks, users, rosters, playersDb] = await Promise.all([
+    const [draftFull, picks, users, rosters, tradedPicks, playersDb] = await Promise.all([
       get(`/draft/${rookieDraft.draft_id}`),
       get(`/draft/${rookieDraft.draft_id}/picks`).catch(() => []),
       get(`/league/${LEAGUE_ID}/users`),
       get(`/league/${LEAGUE_ID}/rosters`),
+      get(`/league/${LEAGUE_ID}/traded_picks`).catch(() => []),
       getPlayers(),
     ]);
 
@@ -101,6 +102,17 @@ export default async function handler(req, res) {
         owner_id: r.owner_id,
         players: r.players || [],
       })),
+      // Picks traded but not yet drafted, for the current draft's season only.
+      // Each entry maps original slot owner (roster_id) → current owner (owner_id).
+      traded_picks: tradedPicks
+        .filter(t => t.season === rookieDraft.season)
+        .map(t => ({
+          season: t.season,
+          round: t.round,
+          roster_id: t.roster_id,
+          previous_owner_id: t.previous_owner_id,
+          owner_id: t.owner_id,
+        })),
       players: playersOut,
       rookies: allRookies,
       updated: Date.now(),

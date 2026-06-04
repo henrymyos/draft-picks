@@ -2692,6 +2692,20 @@ function renderDraftWorkspace() {
   }, d.draft.status === "drafting" ? "LIVE"
     : d.draft.status === "complete" ? "Complete" : "Pre-draft");
 
+  // For each (round, slot), figure out the CURRENT owner:
+  // start from slot_to_roster_id; if a traded_pick matches that round + the
+  // original roster, current owner = the trade's owner_id (most recent only).
+  const tradedByKey = {};  // "round:originalRosterId" -> owner_id (latest)
+  (d.traded_picks || []).forEach(t => {
+    tradedByKey[t.round + ":" + t.roster_id] = t.owner_id;
+  });
+  function ownerOfSlot(round, slot) {
+    const original = d.draft.slot_to_roster_id[slot];
+    if (original == null) return null;
+    const traded = tradedByKey[round + ":" + original];
+    return traded != null ? traded : original;
+  }
+
   // Compute who is on the clock + my next pick
   const totalPicks = (d.draft.rounds || 3) * 12;
   const madePicks = d.picks.length;
@@ -2700,27 +2714,24 @@ function renderDraftWorkspace() {
   const slotInRound = ((nextOverall - 1) % 12) + 1;
   // Slot in actual draft depends on round (snake vs linear). League is "linear" per data.
   const onClockSlot = slotInRound; // linear
-  const onClockRosterId = d.draft.slot_to_roster_id[onClockSlot];
+  const onClockRosterId = ownerOfSlot(nextRound, onClockSlot);
   const onClockUser = d.users.find(u => {
     const r = d.rosters.find(rr => rr.roster_id === onClockRosterId);
     return r && u.user_id === r.owner_id;
   });
   const onClockName = onClockUser ? canonicalOwnerName(onClockUser.team_name || onClockUser.display_name) : "—";
 
-  // Determine my upcoming picks (slot 1-12 → roster_id; same slot every round)
-  let mySlot = null;
-  if (myRosterId != null) {
-    const entry = Object.entries(d.draft.slot_to_roster_id || {})
-      .find(([, rid]) => rid === myRosterId);
-    if (entry) mySlot = parseInt(entry[0], 10);
-  }
   const myUpcomingOveralls = [];
-  if (mySlot != null) {
-    for (let rd = 1; rd <= (d.draft.rounds || 3); rd++) {
-      const overall = (rd - 1) * 12 + mySlot;
-      if (overall >= nextOverall) myUpcomingOveralls.push({ rd, slot: mySlot, overall });
+  for (let rd = 1; rd <= (d.draft.rounds || 3); rd++) {
+    for (let slot = 1; slot <= 12; slot++) {
+      const overall = (rd - 1) * 12 + slot;
+      if (overall < nextOverall) continue;
+      if (myRosterId != null && ownerOfSlot(rd, slot) === myRosterId) {
+        myUpcomingOveralls.push({ rd, slot, overall });
+      }
     }
   }
+  myUpcomingOveralls.sort((a, b) => a.overall - b.overall);
 
   // On-the-clock banner if it's the user
   if (d.draft.status !== "complete") {
