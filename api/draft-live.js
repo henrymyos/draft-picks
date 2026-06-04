@@ -1,0 +1,111 @@
+// Lightweight live snapshot of the current rookie draft for the Live Draft
+// workspace. Polled every ~15s. Cached at the CDN for 10s so heavy polling
+// doesn't slam Sleeper.
+
+const LEAGUE_ID = "1312076332460425216";
+const SLEEPER = "https://api.sleeper.app/v1";
+
+async function get(p) {
+  const r = await fetch(`${SLEEPER}${p}`);
+  if (!r.ok) throw new Error(`${p}: HTTP ${r.status}`);
+  return r.json();
+}
+
+let playersCache = null;
+let playersCacheAt = 0;
+const PLAYERS_TTL = 6 * 60 * 60 * 1000;
+
+async function getPlayers() {
+  if (playersCache && Date.now() - playersCacheAt < PLAYERS_TTL) return playersCache;
+  playersCache = await get("/players/nfl");
+  playersCacheAt = Date.now();
+  return playersCache;
+}
+
+export default async function handler(req, res) {
+  try {
+    const drafts = await get(`/league/${LEAGUE_ID}/drafts`);
+    const rookieDraft = drafts
+      .filter(d => d.settings && d.settings.rounds === 3)
+      .sort((a, b) => (a.created || 0) - (b.created || 0))[0];
+    if (!rookieDraft) {
+      res.status(500).json({ error: "no rookie draft found" });
+      return;
+    }
+
+    const [draftFull, picks, users, rosters, playersDb] = await Promise.all([
+      get(`/draft/${rookieDraft.draft_id}`),
+      get(`/draft/${rookieDraft.draft_id}/picks`).catch(() => []),
+      get(`/league/${LEAGUE_ID}/users`),
+      get(`/league/${LEAGUE_ID}/rosters`),
+      getPlayers(),
+    ]);
+
+    const playerIds = new Set();
+    picks.forEach(p => p.player_id && playerIds.add(p.player_id));
+    rosters.forEach(r => (r.players || []).forEach(pid => playerIds.add(pid)));
+    const playersOut = {};
+    playerIds.forEach(id => {
+      const p = playersDb[id];
+      if (p) playersOut[id] = {
+        name: `${p.first_name || ""} ${p.last_name || ""}`.trim() || id,
+        position: p.position || null,
+        team: p.team || null,
+        years_exp: p.years_exp,
+        rookie: p.years_exp === 0,
+      };
+    });
+
+    // Also expose rookies of the upcoming class so we can match them against KTC
+    const allRookies = [];
+    for (const id in playersDb) {
+      const p = playersDb[id];
+      if (!p) continue;
+      if (p.years_exp !== 0) continue;            // years_exp 0 = current rookie class
+      if (!["QB", "RB", "WR", "TE"].includes(p.position)) continue;
+      allRookies.push({
+        player_id: id,
+        name: `${p.first_name || ""} ${p.last_name || ""}`.trim(),
+        position: p.position,
+        team: p.team || null,
+      });
+    }
+
+    res.setHeader("Cache-Control", "s-maxage=10, stale-while-revalidate=30");
+    res.json({
+      draft: {
+        draft_id: rookieDraft.draft_id,
+        status: rookieDraft.status,
+        season: rookieDraft.season,
+        rounds: rookieDraft.settings.rounds,
+        slot_to_roster_id: draftFull.slot_to_roster_id || {},
+        type: rookieDraft.type,
+        start_time: rookieDraft.start_time,
+        last_picked: rookieDraft.last_picked,
+      },
+      picks: picks.map(p => ({
+        pick_no: p.pick_no,
+        round: p.round,
+        draft_slot: p.draft_slot,
+        player_id: p.player_id,
+        roster_id: p.roster_id,
+        picked_by: p.picked_by,
+      })),
+      users: users.map(u => ({
+        user_id: u.user_id,
+        display_name: u.display_name,
+        team_name: u.metadata && u.metadata.team_name,
+      })),
+      rosters: rosters.map(r => ({
+        roster_id: r.roster_id,
+        owner_id: r.owner_id,
+        players: r.players || [],
+      })),
+      players: playersOut,
+      rookies: allRookies,
+      updated: Date.now(),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}

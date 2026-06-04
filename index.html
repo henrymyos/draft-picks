@@ -349,6 +349,145 @@
     font-weight: 600;
   }
 
+  .ws-switch {
+    display: inline-flex;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .ws-switch .ws-btn {
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 6px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .ws-switch .ws-btn.active {
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+  .ws-switch .ws-btn:hover:not(.active) { color: var(--text); }
+
+  .draft-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 800px) {
+    .draft-grid { grid-template-columns: 1fr; }
+  }
+  .on-clock-banner {
+    background: linear-gradient(90deg, rgba(46,160,67,0.18), rgba(46,160,67,0.05));
+    border-left: 4px solid var(--hit);
+    padding: 12px 16px;
+    border-radius: 6px;
+    margin-bottom: 16px;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .rec-card {
+    background: rgba(46,160,67,0.10);
+    border: 1px solid rgba(46,160,67,0.4);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .rec-card .rec-label {
+    color: var(--hit);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+  .rec-card .rec-player {
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .rec-card .rec-meta {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .roster-section { margin-bottom: 12px; }
+  .roster-section h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+  }
+  .roster-list { display: flex; flex-wrap: wrap; gap: 4px; }
+  .roster-chip {
+    background: var(--panel-2);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--text);
+  }
+  .roster-chip.is-rookie { color: var(--accent); border: 1px solid rgba(88,166,255,0.4); }
+  .draft-pill {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    margin-left: 6px;
+  }
+  .draft-pill.live { background: rgba(248,81,73,0.15); color: var(--miss); }
+  .draft-pill.pre { background: var(--panel-2); }
+  .draft-pill.done { background: rgba(46,160,67,0.15); color: var(--hit); }
+  .pick-history-row {
+    display: grid;
+    grid-template-columns: 56px 1fr 110px;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .pick-history-row.is-mine { background: rgba(88,166,255,0.10); }
+  .pick-history-slot { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pick-history-by { color: var(--muted); font-size: 12px; text-align: right; }
+  .toggle-row {
+    display: flex;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 3px;
+    gap: 2px;
+    margin-bottom: 12px;
+  }
+  .toggle-row button {
+    flex: 1;
+    background: transparent;
+    color: var(--muted);
+    border: none;
+    padding: 6px 10px;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .toggle-row button.active {
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--border);
+  }
+
   .section-header {
     color: var(--muted);
     font-size: 12px;
@@ -588,13 +727,17 @@
 <header>
   <div class="header-row">
     <h1>🏈 Draft Picks Tracker</h1>
+    <div class="ws-switch" id="wsSwitch">
+      <button class="ws-btn" data-ws="stats">Stats</button>
+      <button class="ws-btn" data-ws="draft">Live Draft</button>
+    </div>
     <div class="status">
       <span class="status-dot" id="statusDot"></span>
       <span id="statusText">Loading…</span>
       <button class="refresh" id="refreshBtn">Refresh</button>
     </div>
   </div>
-  <nav class="tabs">
+  <nav class="tabs" id="statsTabs">
     <button data-view="overview" class="active">Overview</button>
     <button data-view="year">By Year</button>
     <button data-view="person">By Person</button>
@@ -641,7 +784,22 @@ function classifyColor(hex) {
   return null;
 }
 
+const LS_WORKSPACE = "dp.workspace.v1";
+const LS_DRAFT_USER = "dp.draftUserId.v1";
+const LS_DRAFT_MODE = "dp.draftMode.v1";
+
 let state = {
+  workspace: (() => { try { return localStorage.getItem(LS_WORKSPACE) || "stats"; } catch { return "stats"; } })(),
+  draft: {
+    data: null,
+    ktcLive: null,
+    loading: false,
+    error: null,
+    myUserId: (() => { try { return localStorage.getItem(LS_DRAFT_USER); } catch { return null; } })(),
+    posMode: (() => { try { return localStorage.getItem(LS_DRAFT_MODE) === "pos"; } catch { return false; } })(),
+    lastPoll: null,
+    pollTimer: null,
+  },
   picks: [],          // {year, round, person, player, result, color, pos}
   years: [],
   people: [],
@@ -2421,6 +2579,384 @@ function renderTradePickLine(dp, allSeasons, players, tradeCreated) {
   return line;
 }
 
+// ---------- Live Draft workspace ----------
+async function loadDraftLive() {
+  state.draft.loading = true;
+  state.draft.error = null;
+  try {
+    const [draftRes, ktcRes] = await Promise.all([
+      fetch("/api/draft-live?_=" + Date.now(), { cache: "no-store" }),
+      fetch("/api/ktc-live", { cache: "no-store" }),
+    ]);
+    if (!draftRes.ok) throw new Error("draft " + draftRes.status);
+    if (!ktcRes.ok) throw new Error("ktc " + ktcRes.status);
+    state.draft.data = await draftRes.json();
+    state.draft.ktcLive = await ktcRes.json();
+    state.draft.lastPoll = new Date();
+    if (state.draft.data.error) throw new Error(state.draft.data.error);
+  } catch (e) {
+    console.error(e);
+    state.draft.error = e.message;
+  } finally {
+    state.draft.loading = false;
+    if (state.workspace === "draft") render();
+  }
+}
+
+function startDraftPolling() {
+  if (state.draft.pollTimer) return;
+  state.draft.pollTimer = setInterval(() => {
+    if (state.workspace === "draft") loadDraftLive();
+  }, 15_000);
+}
+function stopDraftPolling() {
+  if (state.draft.pollTimer) {
+    clearInterval(state.draft.pollTimer);
+    state.draft.pollTimer = null;
+  }
+}
+
+function ktcNorm(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[’‘ʼ]/g, "'")
+    .replace(/[.,'`]/g, "")
+    .replace(/\s+jr\b|\s+sr\b|\s+ii\b|\s+iii\b|\s+iv\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function setWorkspace(ws) {
+  state.workspace = ws;
+  try { localStorage.setItem(LS_WORKSPACE, ws); } catch {}
+  document.querySelectorAll(".ws-btn").forEach(b => b.classList.toggle("active", b.dataset.ws === ws));
+  document.getElementById("statsTabs").style.display = ws === "stats" ? "" : "none";
+  if (ws === "draft") {
+    if (!state.draft.data) loadDraftLive();
+    startDraftPolling();
+  } else {
+    stopDraftPolling();
+  }
+  render();
+}
+
+function renderDraftWorkspace() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+
+  if (state.draft.loading && !state.draft.data) {
+    main.appendChild(el("div", { class: "empty" }, "Loading draft…"));
+    return;
+  }
+  if (state.draft.error && !state.draft.data) {
+    main.appendChild(el("div", { class: "empty" }, "Error: " + state.draft.error));
+    return;
+  }
+  if (!state.draft.data) {
+    main.appendChild(el("div", { class: "empty" }, "No draft data."));
+    return;
+  }
+
+  const d = state.draft.data;
+
+  // Team picker
+  const controls = el("div", { class: "controls" });
+  const sortedUsers = d.users.slice().sort((a, b) =>
+    canonicalOwnerName(a.team_name || a.display_name).localeCompare(
+      canonicalOwnerName(b.team_name || b.display_name)
+    )
+  );
+  if (state.draft.myUserId == null && sortedUsers.length) {
+    state.draft.myUserId = sortedUsers[0].user_id;
+  }
+  const userOpts = sortedUsers.map(u => ({
+    value: u.user_id,
+    label: canonicalOwnerName(u.team_name || u.display_name),
+  }));
+  controls.appendChild(customSelect(userOpts, state.draft.myUserId, v => {
+    state.draft.myUserId = v;
+    try { localStorage.setItem(LS_DRAFT_USER, v); } catch {}
+    render();
+  }));
+  main.appendChild(controls);
+
+  const me = d.users.find(u => u.user_id === state.draft.myUserId);
+  const myRoster = d.rosters.find(r => r.owner_id === state.draft.myUserId);
+  const myRosterId = myRoster ? myRoster.roster_id : null;
+  const myName = me ? canonicalOwnerName(me.team_name || me.display_name) : "—";
+
+  // Draft state badge
+  const statusBadge = el("span", {
+    class: "draft-pill " + (d.draft.status === "drafting" ? "live"
+      : d.draft.status === "complete" ? "done" : "pre"),
+  }, d.draft.status === "drafting" ? "LIVE"
+    : d.draft.status === "complete" ? "Complete" : "Pre-draft");
+
+  // Compute who is on the clock + my next pick
+  const totalPicks = (d.draft.rounds || 3) * 12;
+  const madePicks = d.picks.length;
+  const nextOverall = madePicks + 1;
+  const nextRound = Math.ceil(nextOverall / 12);
+  const slotInRound = ((nextOverall - 1) % 12) + 1;
+  // Slot in actual draft depends on round (snake vs linear). League is "linear" per data.
+  const onClockSlot = slotInRound; // linear
+  const onClockRosterId = d.draft.slot_to_roster_id[onClockSlot];
+  const onClockUser = d.users.find(u => {
+    const r = d.rosters.find(rr => rr.roster_id === onClockRosterId);
+    return r && u.user_id === r.owner_id;
+  });
+  const onClockName = onClockUser ? canonicalOwnerName(onClockUser.team_name || onClockUser.display_name) : "—";
+
+  // Determine my upcoming picks (slot 1-12 → roster_id; same slot every round)
+  let mySlot = null;
+  if (myRosterId != null) {
+    const entry = Object.entries(d.draft.slot_to_roster_id || {})
+      .find(([, rid]) => rid === myRosterId);
+    if (entry) mySlot = parseInt(entry[0], 10);
+  }
+  const myUpcomingOveralls = [];
+  if (mySlot != null) {
+    for (let rd = 1; rd <= (d.draft.rounds || 3); rd++) {
+      const overall = (rd - 1) * 12 + mySlot;
+      if (overall >= nextOverall) myUpcomingOveralls.push({ rd, slot: mySlot, overall });
+    }
+  }
+
+  // On-the-clock banner if it's the user
+  if (d.draft.status !== "complete") {
+    const isMine = onClockRosterId === myRosterId;
+    const banner = el("div", { class: "on-clock-banner" });
+    if (isMine) {
+      banner.innerHTML = `🎯 <strong>You're on the clock</strong> — Pick #${nextOverall} ` +
+        `(${nextRound}.${String(onClockSlot).padStart(2, "0")})`;
+    } else if (myUpcomingOveralls.length) {
+      const next = myUpcomingOveralls[0];
+      const away = next.overall - nextOverall;
+      banner.innerHTML = `On the clock: <strong>${onClockName}</strong> ` +
+        `· Pick #${nextOverall} (${nextRound}.${String(onClockSlot).padStart(2, "0")}). ` +
+        `Your next: ${next.rd}.${String(next.slot).padStart(2, "0")} (#${next.overall}, ${away} pick${away === 1 ? "" : "s"} away).`;
+    } else {
+      banner.innerHTML = `On the clock: <strong>${onClockName}</strong>. You have no remaining picks.`;
+    }
+    main.appendChild(banner);
+  }
+
+  // KTC-ranked available rookies + recommendations
+  const ktc = (state.draft.ktcLive && state.draft.ktcLive.players) || [];
+  const ktcByName = {};
+  ktc.forEach(p => { ktcByName[p.normName] = p; });
+
+  // Picked Sleeper player_ids
+  const pickedIds = new Set(d.picks.map(p => p.player_id).filter(Boolean));
+
+  // Build available rookie pool by intersecting Sleeper's rookie list with KTC
+  // ranking. If a rookie isn't on KTC we rank them at the bottom (unranked).
+  const rookieByName = {};
+  d.rookies.forEach(r => { rookieByName[ktcNorm(r.name)] = r; });
+
+  const availablePool = [];
+  ktc.forEach(p => {
+    const sleeperRookie = rookieByName[p.normName];
+    if (!sleeperRookie) return;
+    if (pickedIds.has(sleeperRookie.player_id)) return;
+    availablePool.push({
+      ...p,
+      player_id: sleeperRookie.player_id,
+      team: sleeperRookie.team || p.team,
+    });
+  });
+
+  // Position-need calculation
+  const POS_LIST = ["QB", "RB", "WR", "TE"];
+  const teamCounts = {};
+  d.rosters.forEach(r => {
+    teamCounts[r.roster_id] = { QB: 0, RB: 0, WR: 0, TE: 0 };
+    (r.players || []).forEach(pid => {
+      const pl = d.players[pid];
+      if (pl && POS_LIST.includes(pl.position)) {
+        teamCounts[r.roster_id][pl.position]++;
+      }
+    });
+  });
+  const leagueAvg = { QB: 0, RB: 0, WR: 0, TE: 0 };
+  Object.values(teamCounts).forEach(c => POS_LIST.forEach(p => leagueAvg[p] += c[p]));
+  POS_LIST.forEach(p => leagueAvg[p] /= d.rosters.length || 1);
+
+  const myCounts = (myRosterId != null && teamCounts[myRosterId]) || { QB: 0, RB: 0, WR: 0, TE: 0 };
+  const posBoost = {};
+  POS_LIST.forEach(p => {
+    const ratio = leagueAvg[p] > 0 ? myCounts[p] / leagueAvg[p] : 1;
+    // Below 0.8 of avg → 25% boost; below 0.6 of avg → 40% boost.
+    posBoost[p] = ratio < 0.6 ? 1.4 : ratio < 0.8 ? 1.25 : ratio < 1 ? 1.10 : 1.0;
+  });
+
+  function scoreFor(p) {
+    if (state.draft.posMode) return p.value * (posBoost[p.position] || 1);
+    return p.value;
+  }
+  const recommendations = availablePool.slice().sort((a, b) => scoreFor(b) - scoreFor(a));
+
+  // ===== Left column: Recommendation + Available rookies =====
+  const grid = el("div", { class: "draft-grid" });
+
+  const leftCol = el("div", {});
+  const recCard = el("div", { class: "card" },
+    el("h2", {}, "Recommendation ", statusBadge)
+  );
+  // Mode toggle
+  const toggle = el("div", { class: "toggle-row" });
+  const baBtn = el("button", { class: state.draft.posMode ? "" : "active" }, "Best Available");
+  const posBtn = el("button", { class: state.draft.posMode ? "active" : "" }, "Position-Need");
+  baBtn.addEventListener("click", () => {
+    state.draft.posMode = false;
+    try { localStorage.setItem(LS_DRAFT_MODE, "ba"); } catch {}
+    render();
+  });
+  posBtn.addEventListener("click", () => {
+    state.draft.posMode = true;
+    try { localStorage.setItem(LS_DRAFT_MODE, "pos"); } catch {}
+    render();
+  });
+  toggle.appendChild(baBtn);
+  toggle.appendChild(posBtn);
+  recCard.appendChild(toggle);
+
+  if (state.draft.posMode) {
+    const needLine = el("div", { class: "pct", style: "margin-bottom:10px" });
+    needLine.textContent = "Your positional gap: " + POS_LIST.map(p => {
+      const me = (myCounts[p] || 0).toFixed(0);
+      const avg = leagueAvg[p].toFixed(1);
+      return `${p} ${me}/${avg}`;
+    }).join("  ·  ");
+    recCard.appendChild(needLine);
+  }
+
+  if (!recommendations.length) {
+    recCard.appendChild(el("div", { class: "empty" }, "No KTC-ranked rookies left or KTC live data not loaded."));
+  } else {
+    recommendations.slice(0, 3).forEach((p, i) => {
+      const card = el("div", { class: "rec-card" });
+      card.appendChild(el("div", { class: "rec-label" }, i === 0 ? "Top pick" : i === 1 ? "Next option" : "Backup"));
+      const playerLine = el("div", { class: "rec-player" }, p.name);
+      if (p.position) {
+        playerLine.appendChild(el("span", { class: "pos-chip " + positionClass(p.position) }, p.position));
+      }
+      card.appendChild(playerLine);
+      const metaBits = [`KTC #${p.rookieRank}`, `value ${p.value}`];
+      if (p.team) metaBits.push(p.team);
+      if (state.draft.posMode && posBoost[p.position] !== 1) {
+        metaBits.push(`need boost ×${posBoost[p.position].toFixed(2)}`);
+      }
+      card.appendChild(el("div", { class: "rec-meta" }, metaBits.join("  ·  ")));
+      recCard.appendChild(card);
+    });
+  }
+  leftCol.appendChild(recCard);
+
+  // Top available pool
+  const availCard = el("div", { class: "card" }, el("h2", {}, "Top Available Rookies"));
+  if (!recommendations.length) {
+    availCard.appendChild(el("div", { class: "empty" }, "—"));
+  } else {
+    recommendations.slice(0, 20).forEach((p, idx) => {
+      const row = el("div", { class: "pick-history-row" },
+        el("div", { class: "pick-history-slot" }, "#" + (idx + 1)),
+        el("div", {},
+          p.name,
+          p.position ? el("span", { class: "pos-chip " + positionClass(p.position), style: "margin-left:8px" }, p.position) : null,
+        ),
+        el("div", { class: "pick-history-by" },
+          `KTC ${p.rookieRank} · ${p.value}` + (p.team ? "  ·  " + p.team : ""),
+        ),
+      );
+      availCard.appendChild(row);
+    });
+  }
+  leftCol.appendChild(availCard);
+
+  // ===== Right column: My picks + recent activity + roster =====
+  const rightCol = el("div", {});
+
+  const myPicksCard = el("div", { class: "card" }, el("h2", {}, myName + "'s Picks"));
+  if (!myUpcomingOveralls.length && mySlot != null) {
+    myPicksCard.appendChild(el("div", { class: "empty" }, "No upcoming picks."));
+  } else if (mySlot == null) {
+    myPicksCard.appendChild(el("div", { class: "empty" }, "Not assigned a draft slot yet."));
+  } else {
+    myUpcomingOveralls.forEach(p => {
+      const away = p.overall - nextOverall;
+      myPicksCard.appendChild(el("div", { class: "pick-history-row is-mine" },
+        el("div", { class: "pick-history-slot" }, p.rd + "." + String(p.slot).padStart(2, "0")),
+        el("div", {}, "Pick #" + p.overall),
+        el("div", { class: "pick-history-by" },
+          away === 0 ? "On the clock" : (away === 1 ? "Next" : `${away} picks away`)),
+      ));
+    });
+  }
+  rightCol.appendChild(myPicksCard);
+
+  // Recent activity (last 10 picks)
+  const recentCard = el("div", { class: "card" }, el("h2", {}, "Recent Picks"));
+  if (!d.picks.length) {
+    recentCard.appendChild(el("div", { class: "empty" }, "Draft hasn't started."));
+  } else {
+    const recent = d.picks.slice(-10).reverse();
+    recent.forEach(p => {
+      const player = p.player_id ? d.players[p.player_id] : null;
+      const rosterUser = d.users.find(u => {
+        const rr = d.rosters.find(r => r.roster_id === p.roster_id);
+        return rr && rr.owner_id === u.user_id;
+      });
+      const isMine = p.roster_id === myRosterId;
+      recentCard.appendChild(el("div", { class: "pick-history-row" + (isMine ? " is-mine" : "") },
+        el("div", { class: "pick-history-slot" }, p.round + "." + String(p.draft_slot).padStart(2, "0")),
+        el("div", {},
+          player ? player.name : ("Player " + p.player_id),
+          player && player.position
+            ? el("span", { class: "pos-chip " + positionClass(player.position), style: "margin-left:8px" }, player.position)
+            : null,
+        ),
+        el("div", { class: "pick-history-by" },
+          rosterUser ? canonicalOwnerName(rosterUser.team_name || rosterUser.display_name) : "—"),
+      ));
+    });
+  }
+  rightCol.appendChild(recentCard);
+
+  // Your roster
+  const rosterCard = el("div", { class: "card" }, el("h2", {}, myName + "'s Roster"));
+  if (!myRoster || !myRoster.players.length) {
+    rosterCard.appendChild(el("div", { class: "empty" }, "No roster found."));
+  } else {
+    const byPos = { QB: [], RB: [], WR: [], TE: [], OTHER: [] };
+    myRoster.players.forEach(pid => {
+      const p = d.players[pid];
+      if (!p) return;
+      const bucket = byPos[p.position] ? p.position : "OTHER";
+      byPos[bucket].push(p);
+    });
+    ["QB", "RB", "WR", "TE"].forEach(pos => {
+      if (!byPos[pos].length) return;
+      const sec = el("div", { class: "roster-section" },
+        el("h4", {}, `${pos} (${byPos[pos].length})`),
+      );
+      const list = el("div", { class: "roster-list" });
+      byPos[pos]
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .forEach(pl => {
+          list.appendChild(el("div", { class: "roster-chip" + (pl.rookie ? " is-rookie" : "") }, pl.name));
+        });
+      sec.appendChild(list);
+      rosterCard.appendChild(sec);
+    });
+  }
+  rightCol.appendChild(rosterCard);
+
+  grid.appendChild(leftCol);
+  grid.appendChild(rightCol);
+  main.appendChild(grid);
+}
+
 function setActiveTab(view) {
   document.querySelectorAll("nav.tabs button").forEach(b => {
     b.classList.toggle("active", b.dataset.view === view);
@@ -2428,6 +2964,10 @@ function setActiveTab(view) {
 }
 
 function render() {
+  if (state.workspace === "draft") {
+    renderDraftWorkspace();
+    return;
+  }
   if (!state.picks.length) {
     document.getElementById("main").innerHTML = '<div class="empty">No draft data available.</div>';
     return;
@@ -2479,8 +3019,16 @@ document.querySelectorAll("nav.tabs button").forEach(b => {
     render();
   });
 });
-document.getElementById("refreshBtn").addEventListener("click", loadData);
+document.querySelectorAll(".ws-btn").forEach(b => {
+  b.addEventListener("click", () => setWorkspace(b.dataset.ws));
+});
+document.getElementById("refreshBtn").addEventListener("click", () => {
+  if (state.workspace === "draft") loadDraftLive();
+  else loadData();
+});
 
+// Initial bootstrap
+setWorkspace(state.workspace);
 loadData();
 setInterval(loadData, REFRESH_MS);
 </script>
