@@ -343,6 +343,11 @@
     font-size: 12px;
   }
   tr.pos-tier td { color: var(--muted); font-size: 12px; }
+  td.cell-best {
+    background: rgba(46, 160, 67, 0.14);
+    color: var(--hit);
+    font-weight: 600;
+  }
 
   .section-header {
     color: var(--muted);
@@ -1388,6 +1393,122 @@ function renderStats() {
     posCard.appendChild(posTable);
   }
   main.appendChild(posCard);
+
+  // ----- Card: Position × Section grid (where each position pays off) -----
+  const psCard = el("div", { class: "card" }, el("h2", {}, "Best Position per Section"));
+  const PS_POSITIONS = ["QB", "RB", "WR", "TE"];
+  const PS_SECTIONS = [
+    { round: 1, tier: "Early", label: "R1 Early", slots: "1.01–1.04" },
+    { round: 1, tier: "Mid", label: "R1 Mid", slots: "1.05–1.08" },
+    { round: 1, tier: "Late", label: "R1 Late", slots: "1.09–1.12" },
+    { round: 2, tier: "Early", label: "R2 Early", slots: "2.01–2.04" },
+    { round: 2, tier: "Mid", label: "R2 Mid", slots: "2.05–2.08" },
+    { round: 2, tier: "Late", label: "R2 Late", slots: "2.09–2.12" },
+    { round: 3, tier: "Early", label: "R3 Early", slots: "3.01–3.04" },
+    { round: 3, tier: "Mid", label: "R3 Mid", slots: "3.05–3.08" },
+    { round: 3, tier: "Late", label: "R3 Late", slots: "3.09–3.12" },
+  ];
+  const MIN_SAMPLE = 2;
+
+  const psTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Section"),
+      ...PS_POSITIONS.map(pos => el("th", { class: "num tight" },
+        el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+        pos
+      )),
+    )),
+  );
+  const psBody = el("tbody", {});
+  PS_SECTIONS.forEach(section => {
+    const sectionPicks = state.picks.filter(p =>
+      p.round === section.round && tierOfPickInRound(p.pickInRound) === section.tier
+    );
+    const posData = PS_POSITIONS.map(pos => {
+      const subset = sectionPicks.filter(p => p.pos === pos);
+      const t = tally(subset);
+      return { pos, t, hitPct: t.graded ? t.hit / t.graded : null };
+    });
+    const valid = posData.filter(d => d.hitPct !== null && d.t.total >= MIN_SAMPLE);
+    const bestPos = valid.length
+      ? valid.reduce((a, b) => (b.hitPct > a.hitPct ? b : a)).pos
+      : null;
+    psBody.appendChild(el("tr", {},
+      el("td", {},
+        section.label,
+        el("span", { class: "pct", style: "margin-left:8px" }, section.slots)
+      ),
+      ...posData.map(d => {
+        const isBest = d.pos === bestPos;
+        const cellClass = "num tight" + (isBest ? " cell-best" : "");
+        if (d.hitPct === null) {
+          return el("td", { class: cellClass + " pct" }, "—");
+        }
+        return el("td", { class: cellClass },
+          formatPct(d.t.hit, d.t.graded),
+          el("span", { class: "pct", style: "margin-left:4px" }, "(" + d.t.total + ")"),
+        );
+      }),
+    ));
+  });
+  psTable.appendChild(psBody);
+  psCard.appendChild(psTable);
+
+  // Per-position best-section summary
+  psCard.appendChild(el("h3", { style: "margin-top:22px" }, "Where to draft each position"));
+  const sumTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Position"),
+      el("th", {}, "Best Section"),
+      el("th", { class: "num tight" }, "Hit %"),
+      el("th", { class: "num tight" }, "Sample"),
+    )),
+  );
+  const sumBody = el("tbody", {});
+  PS_POSITIONS.forEach(pos => {
+    const sectionsHit = PS_SECTIONS.map(section => {
+      const subset = state.picks.filter(p =>
+        p.round === section.round
+        && tierOfPickInRound(p.pickInRound) === section.tier
+        && p.pos === pos
+      );
+      const t = tally(subset);
+      return { section, t, hitPct: t.graded ? t.hit / t.graded : null };
+    }).filter(s => s.t.total >= MIN_SAMPLE && s.hitPct !== null);
+    if (!sectionsHit.length) {
+      sumBody.appendChild(el("tr", {},
+        el("td", {},
+          el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+          pos
+        ),
+        el("td", { class: "pct" }, "not enough data"),
+        el("td", { class: "num tight" }, "—"),
+        el("td", { class: "num tight" }, "—"),
+      ));
+      return;
+    }
+    const best = sectionsHit.reduce((a, b) => (b.hitPct > a.hitPct ? b : a));
+    sumBody.appendChild(el("tr", {},
+      el("td", {},
+        el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
+        pos
+      ),
+      el("td", {},
+        best.section.label,
+        el("span", { class: "pct", style: "margin-left:8px" }, best.section.slots)
+      ),
+      el("td", { class: "num tight" }, formatPct(best.t.hit, best.t.graded)),
+      el("td", { class: "num tight" }, String(best.t.total)),
+    ));
+  });
+  sumTable.appendChild(sumBody);
+  psCard.appendChild(sumTable);
+  psCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Top grid: hit % per position in each section (pick count in parens). " +
+    "The best position in each section is highlighted. " +
+    `Sections with fewer than ${MIN_SAMPLE} picks at a position are ignored.`
+  ));
+  main.appendChild(psCard);
 
   // ----- Card: Drafter × Position × Tier -----
   main.appendChild(el("div", { class: "section-header" }, "Drafter Behavior",
