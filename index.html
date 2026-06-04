@@ -625,6 +625,14 @@
   .trade-player { font-weight: 500; }
   .trade-where { color: var(--muted); font-size: 12px; margin-left: auto; }
   .trade-resolved { color: var(--muted); font-size: 13px; }
+  .trade-value-tag {
+    margin-left: auto;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.04);
+  }
   .trade-empty { color: var(--muted); font-style: italic; font-size: 13px; }
 
   @media (max-width: 640px) {
@@ -822,6 +830,9 @@ let state = {
   ktc: null,                // {seasons: {year: {snapshot, players: {normName: {rank,value,position}}}}}
   ktcLoading: false,
   ktcError: null,
+  tradeHistory: null,
+  tradeHistoryLoading: false,
+  tradeHistoryError: null,
 };
 
 function rgbToHex(bg) {
@@ -2221,6 +2232,82 @@ function ensureKtcLoaded() {
   if (!state.ktc && !state.ktcLoading && !state.ktcError) loadKtc();
 }
 
+async function loadTradeHistory() {
+  if (state.tradeHistoryLoading || state.tradeHistory) return;
+  state.tradeHistoryLoading = true;
+  state.tradeHistoryError = null;
+  render();
+  try {
+    const res = await fetch("/api/ktc-history", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    state.tradeHistory = data;
+  } catch (e) {
+    state.tradeHistoryError = e.message;
+  } finally {
+    state.tradeHistoryLoading = false;
+    render();
+  }
+}
+function ensureTradeHistoryLoaded() {
+  if (!state.tradeHistory && !state.tradeHistoryLoading && !state.tradeHistoryError) loadTradeHistory();
+}
+
+// Pick the snapshot whose timestamp is closest to (but not after) the trade time.
+// Falls back to the earliest if the trade predates every snapshot we have.
+function snapshotForTradeTime(history, tradeMs) {
+  if (!history || !history.snapshots) return null;
+  let chosen = null;
+  for (const s of history.snapshots) {
+    if (s.timestamp_ms <= tradeMs) chosen = s;
+    else break;
+  }
+  return chosen || history.snapshots[0];
+}
+
+// KTC pick value for a {season, round}. Average available Early/Mid/Late tiers.
+function lookupPickValue(snap, season, round) {
+  if (!snap || !snap.picks) return null;
+  const tiers = ["early", "mid", "late"];
+  let total = 0, count = 0;
+  tiers.forEach(t => {
+    const v = snap.picks[`${season}|${t}|${round}`];
+    if (v && v > 0) { total += v; count++; }
+  });
+  return count > 0 ? total / count : null;
+}
+
+// Compute the value swing of a trade from the perspective of myRosterId.
+// Returns { mySent, myReceived, swing, snapshot }.
+function evaluateTrade(trade, myRosterId, history, sleeperPlayers) {
+  if (!history || !sleeperPlayers) return null;
+  const snap = snapshotForTradeTime(history, trade.created);
+  if (!snap) return null;
+  let mySent = 0, myReceived = 0;
+  Object.entries(trade.adds || {}).forEach(([pid, rid]) => {
+    if (rid !== myRosterId) return;
+    const sp = sleeperPlayers[pid];
+    if (!sp) return;
+    const v = snap.players[ktcNormalizeName(sp.name)];
+    if (v) myReceived += v;
+  });
+  Object.entries(trade.drops || {}).forEach(([pid, rid]) => {
+    if (rid !== myRosterId) return;
+    const sp = sleeperPlayers[pid];
+    if (!sp) return;
+    const v = snap.players[ktcNormalizeName(sp.name)];
+    if (v) mySent += v;
+  });
+  (trade.draft_picks || []).forEach(dp => {
+    const v = lookupPickValue(snap, dp.season, dp.round);
+    if (!v) return;
+    if (dp.owner_id === myRosterId) myReceived += v;
+    if (dp.previous_owner_id === myRosterId) mySent += v;
+  });
+  return { mySent: Math.round(mySent), myReceived: Math.round(myReceived), swing: Math.round(myReceived - mySent), snapshot: snap.label };
+}
+
 // Same normalization as /api/ktc.js — keep in sync for joins to work.
 function ktcNormalizeName(s) {
   return (s || "")
@@ -2366,6 +2453,7 @@ function renderTrades() {
   const main = document.getElementById("main");
   main.innerHTML = "";
   ensureSleeperLoaded();
+  ensureTradeHistoryLoaded();
 
   if (state.sleeperLoading) {
     main.appendChild(el("div", { class: "empty" }, "Loading from Sleeper…"));
@@ -2445,10 +2533,21 @@ function renderTrades() {
     const otherNames = otherRosterIds.map(rid => canonicalOwnerName(userDisplay(rosterToOwner(season, rid)))).join(", ");
 
     const block = el("div", { class: "trade-block" });
-    block.appendChild(el("div", { class: "trade-header" },
+    const header = el("div", { class: "trade-header" },
       el("span", { class: "trade-date" }, fmtDate(trade.created)),
       el("span", { class: "trade-meta" }, season.season + " season  ·  with " + (otherNames || "—")),
-    ));
+    );
+    const evalResult = evaluateTrade(trade, myRosterId, state.tradeHistory, state.sleeper && state.sleeper.players);
+    if (evalResult && (evalResult.mySent > 0 || evalResult.myReceived > 0)) {
+      const swing = evalResult.swing;
+      const sign = swing >= 0 ? "+" : "";
+      const tag = el("span", {
+        class: "trade-value-tag " + (swing >= 0 ? "delta-pos" : "delta-neg"),
+        title: `Got ${evalResult.myReceived} · Gave ${evalResult.mySent} (KTC ${evalResult.snapshot})`,
+      }, `${sign}${swing} KTC`);
+      header.appendChild(tag);
+    }
+    block.appendChild(header);
 
     const cols = el("div", { class: "trade-cols" });
     const received = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, "Received"));
