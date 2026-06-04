@@ -2976,13 +2976,20 @@ function renderDraftWorkspace() {
       byPos[pos]
         .map(pl => {
           const entry = dyn[ktcNorm(pl.name)];
-          return { pl, value: entry ? (entry.value || 0) : 0 };
+          return { pl, entry, value: entry ? (entry.value || 0) : 0 };
         })
         .sort((a, b) => b.value - a.value)
-        .forEach(({ pl, value }) => {
+        .forEach(({ pl, entry, value }) => {
           const chip = el("div", { class: "roster-chip" + (pl.rookie ? " is-rookie" : "") }, pl.name);
+          if (entry && entry.positionRank != null) {
+            chip.appendChild(el("span", {
+              style: "color:var(--accent); margin-left:6px; font-size:11px; font-weight:600",
+            }, pos + String(entry.positionRank)));
+          }
           if (value) {
-            chip.appendChild(el("span", { style: "color:var(--muted); margin-left:6px; font-size:11px" }, String(value)));
+            chip.appendChild(el("span", {
+              style: "color:var(--muted); margin-left:6px; font-size:11px",
+            }, String(value)));
           }
           list.appendChild(chip);
         });
