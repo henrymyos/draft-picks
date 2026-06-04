@@ -2035,16 +2035,20 @@ function renderStats() {
   main.appendChild(el("div", { class: "section-header" }, "Strategy Signals",
     el("span", { class: "section-sub" }, "Does beating consensus work?")));
 
-  // ----- Card: Auto-Graded Picks (top-5 avg positional rank vs round tier) -----
+  // ----- Card: Composite Auto-Graded Picks (position + KTC) -----
   ensurePlayerStatsLoaded();
-  const agCard = el("div", { class: "card" }, el("h2", {}, "Auto-Graded Picks (Top-5 Avg Position Rank)"));
+  ensureTradeHistoryLoaded();
+  const agCard = el("div", { class: "card" }, el("h2", {}, "Composite Auto-Graded Picks"));
   if (!state.sleeper) {
     agCard.appendChild(el("div", { class: "empty" },
       state.sleeperError ? "Sleeper error: " + state.sleeperError : "Loading Sleeper data…"));
-  } else if (!state.playerStats) {
+  } else if (!state.playerStats || !state.tradeHistory) {
     agCard.appendChild(el("div", { class: "empty" },
-      state.playerStatsError ? "Stats error: " + state.playerStatsError : "Loading Sleeper season stats…"));
+      state.playerStatsError ? "Stats error: " + state.playerStatsError
+        : state.tradeHistoryError ? "KTC history error: " + state.tradeHistoryError
+        : "Loading season stats and KTC history…"));
   } else {
+    const ktcBaselines = buildKtcSlotBaselines() || {};
     const gradedPicks = [];
     state.sleeper.seasons.forEach(season => {
       const draft = rookieDraftFor(season);
@@ -2053,12 +2057,14 @@ function renderStats() {
       draft.picks.filter(p => p.round <= 3).forEach(p => {
         const sp = state.sleeper.players[p.player_id];
         if (!sp) return;
-        const career = top5AvgRankSinceDraft(p.player_id, year);
         const slot = `${p.round}.${String(p.draft_slot).padStart(2, "0")}`;
-        const enoughSample = career && career.totalGames >= 4 && career.avgRank != null;
-        const grade = enoughSample
-          ? autoGradeByPosRank(career.avgRank, p.round)
-          : { grade: null, magnitude: 0 };
+        const composite = compositeAutoGrade({
+          playerId: p.player_id,
+          playerName: sp.name,
+          draftYear: year,
+          slot,
+          round: p.round,
+        }, ktcBaselines);
         const owner = rosterToOwner(season, p.roster_id);
         gradedPicks.push({
           year,
@@ -2068,11 +2074,15 @@ function renderStats() {
           drafter: canonicalOwnerName(owner ? userDisplay(owner) : "—"),
           playerName: sp.name,
           position: sp.position,
-          avgRank: career ? career.avgRank : null,
-          top5: career ? career.top5 : [],
-          seasons: career ? career.seasons : 0,
-          games: career ? career.totalGames : 0,
-          ...grade,
+          avgRank: composite.posCareer ? composite.posCareer.avgRank : null,
+          seasons: composite.posCareer ? composite.posCareer.seasons : 0,
+          games: composite.posCareer ? composite.posCareer.totalGames : 0,
+          ktcSurplus: composite.ktcSurplus,
+          posMag: composite.posMag,
+          ktcMag: composite.ktcMag,
+          composite: composite.composite,
+          grade: composite.grade,
+          magnitude: composite.magnitude,
         });
       });
     });
@@ -2132,9 +2142,10 @@ function renderStats() {
     function renderGradeList(rows) {
       const wrap = el("div", { class: "surplus-list" });
       rows.forEach(g => {
-        const avgLabel = g.avgRank != null
-          ? `Avg: ${g.position}${g.avgRank.toFixed(1)} (${g.seasons} season${g.seasons === 1 ? "" : "s"})`
-          : "—";
+        const bits = [];
+        if (g.avgRank != null) bits.push(`${g.position}${g.avgRank.toFixed(1)}`);
+        if (g.ktcSurplus != null) bits.push(`KTC ${(g.ktcSurplus >= 0 ? "+" : "") + Math.round(g.ktcSurplus * 100)}%`);
+        const subLabel = bits.length ? bits.join("  ·  ") : "—";
         wrap.appendChild(el("div", { class: "surplus-row" },
           el("span", { class: "surplus-slot" }, `${g.year} · ${g.slot}`),
           el("span", { class: "surplus-player" },
@@ -2145,31 +2156,68 @@ function renderStats() {
             el("span", { class: "auto-grade-chip " + autoGradeClass(g.magnitude), style: "margin-left:8px" }, g.grade),
           ),
           el("span", { class: "surplus-by" }, "by " + g.drafter),
-          el("span", { class: "surplus-delta " + (g.magnitude >= 0 ? "delta-pos" : "delta-neg") }, avgLabel),
+          el("span", { class: "surplus-delta " + (g.magnitude >= 0 ? "delta-pos" : "delta-neg") }, subLabel),
         ));
       });
       return wrap;
     }
 
-    // Sort by how far the avg rank beat / missed the round's "hit" threshold.
-    function rankSurplus(g) {
-      if (!g.grade) return null;
-      const tier = ROUND_TIERS[g.round] || ROUND_TIERS[3];
-      return tier.hit - g.avgRank;
-    }
-    const sortable = graded.filter(g => rankSurplus(g) != null);
-    const sortedBySurplus = sortable.slice().sort((a, b) => rankSurplus(b) - rankSurplus(a));
+    const sortable = graded.filter(g => g.composite != null);
+    const sortedByComposite = sortable.slice().sort((a, b) => b.composite - a.composite);
     agCard.appendChild(el("h3", { style: "margin-top:20px" }, "Biggest hits"));
-    agCard.appendChild(renderGradeList(sortedBySurplus.slice(0, 8)));
+    agCard.appendChild(renderGradeList(sortedByComposite.slice(0, 8)));
     agCard.appendChild(el("h3", { style: "margin-top:20px" }, "Biggest misses"));
-    agCard.appendChild(renderGradeList(sortedBySurplus.slice(-8).reverse()));
+    agCard.appendChild(renderGradeList(sortedByComposite.slice(-8).reverse()));
 
-    agCard.appendChild(el("div", { class: "pct", style: "margin-top:10px" },
-      "Grade is the average of each pick's best five positional finishes since draft, scored with your league's scoring_settings. " +
-      "If a player has fewer than five graded seasons, the missing slots are extrapolated at the player's running average " +
-      "(mathematically equivalent to averaging the seasons they do have). " +
-      "Round 1: Big Hit ≤ pos 6, Hit ≤ 12, Meh ≤ 24, Miss ≤ 36, Big Miss > 36. " +
-      "Round 2: 12 / 24 / 36 / 48. Round 3: 18 / 36 / 48 / 60."
+    // Comparison vs your manual grades from the sheet
+    const sheetByKey = {};
+    state.picks.forEach(sp => {
+      if (sp.year && sp.slot && sp.result) sheetByKey[`${sp.year}|${sp.slot}`] = sp.result;
+    });
+    let agree = 0, disagree = 0, missingManual = 0;
+    const disagreements = [];
+    graded.forEach(g => {
+      const manual = sheetByKey[`${g.year}|${g.slot}`];
+      if (!manual) { missingManual++; return; }
+      const autoCollapsed = collapseTo3Bucket(g.magnitude);
+      if (autoCollapsed === manual) agree++;
+      else { disagree++; disagreements.push({ ...g, manual, auto: autoCollapsed }); }
+    });
+    agCard.appendChild(el("h3", { style: "margin-top:24px" }, "vs your manual grades"));
+    const compLede = el("div", { class: "card-lede" });
+    const agreeRate = agree + disagree > 0 ? (agree / (agree + disagree) * 100).toFixed(0) : "—";
+    compLede.innerHTML = `Auto-grade matches manual on <strong>${agree}</strong> of ${agree + disagree} picks (<strong>${agreeRate}%</strong>). `
+      + `${disagree} disagree. ${missingManual} picks have no manual grade.`;
+    agCard.appendChild(compLede);
+    if (disagreements.length) {
+      // Show 10 most surprising disagreements
+      disagreements.sort((a, b) => Math.abs(b.composite) - Math.abs(a.composite));
+      const head = el("div", { class: "pct", style: "margin-bottom:8px" }, "Top disagreements:");
+      agCard.appendChild(head);
+      const list = el("div", { class: "surplus-list" });
+      disagreements.slice(0, 10).forEach(g => {
+        list.appendChild(el("div", { class: "surplus-row" },
+          el("span", { class: "surplus-slot" }, `${g.year} · ${g.slot}`),
+          el("span", { class: "surplus-player" },
+            g.playerName,
+            g.position
+              ? el("span", { class: "pos-chip " + positionClass(g.position), style: "margin-left:8px" }, g.position)
+              : null,
+            el("span", { class: "auto-grade-chip " + autoGradeClass(g.magnitude), style: "margin-left:8px" }, "Auto: " + g.grade),
+            el("span", { class: "auto-grade-chip auto-meh", style: "margin-left:6px" }, "Manual: " + g.manual),
+          ),
+          el("span", { class: "surplus-by" }, "by " + g.drafter),
+          el("span", { class: "pct" }, ""),
+        ));
+      });
+      agCard.appendChild(list);
+    }
+
+    agCard.appendChild(el("div", { class: "pct", style: "margin-top:14px" },
+      "Composite = 60% × positional score + 40% × KTC-value score. " +
+      "Positional score uses the avg of each pick's best-5 league-scored positional finishes vs round-aware tiers (R1 ≤ 12 to hit, R2 ≤ 24, R3 ≤ 36). " +
+      "KTC score uses each pick's avg historical superflex value vs the slot baseline (±15% / ±50% buckets). " +
+      "Final composite is bucketed to Big Hit / Hit / Meh / Miss / Big Miss; the vs-manual compare collapses to your sheet's 3-tier Hit/Meh/Miss."
     ));
   }
   main.appendChild(agCard);
@@ -2497,6 +2545,105 @@ function autoGradeByPosRank(rank, round) {
   if (rank <= t.meh) return { grade: "Meh", magnitude: 0 };
   if (rank <= t.miss) return { grade: "Miss", magnitude: -1 };
   return { grade: "Big Miss", magnitude: -2 };
+}
+
+// Average KTC superflex value of a player across every history snapshot taken
+// since the player's draft year. Null if no snapshot ever included them.
+function avgKtcValueSinceDraft(playerName, draftYear) {
+  if (!state.tradeHistory || !state.tradeHistory.snapshots) return null;
+  const draftMs = Date.UTC(draftYear, 0, 1);
+  const norm = ktcNormalizeName(playerName);
+  let total = 0, count = 0;
+  state.tradeHistory.snapshots.forEach(snap => {
+    if (snap.timestamp_ms < draftMs) return;
+    const v = snap.players && snap.players[norm];
+    if (v && v > 0) { total += v; count++; }
+  });
+  return count > 0 ? { avg: total / count, samples: count } : null;
+}
+
+// Per-slot median of avg-historical-KTC values, computed across all picks ever
+// taken at that slot. Used to score the KTC dimension of each pick.
+function buildKtcSlotBaselines() {
+  if (!state.sleeper || !state.tradeHistory) return null;
+  const slotValues = {};
+  state.sleeper.seasons.forEach(season => {
+    const draft = rookieDraftFor(season);
+    if (!draft) return;
+    const year = parseInt(season.season, 10);
+    draft.picks.filter(p => p.round <= 3).forEach(p => {
+      const sp = state.sleeper.players[p.player_id];
+      if (!sp) return;
+      const avg = avgKtcValueSinceDraft(sp.name, year);
+      if (!avg) return;
+      const slot = `${p.round}.${String(p.draft_slot).padStart(2, "0")}`;
+      (slotValues[slot] = slotValues[slot] || []).push(avg.avg);
+    });
+  });
+  const baselines = {};
+  Object.entries(slotValues).forEach(([slot, vs]) => {
+    const sorted = vs.slice().sort((a, b) => a - b);
+    const m = Math.floor(sorted.length / 2);
+    baselines[slot] = sorted.length % 2 ? sorted[m] : (sorted[m - 1] + sorted[m]) / 2;
+  });
+  return baselines;
+}
+
+// Score the KTC dimension against the slot's baseline using the same ±15/±50
+// surplus thresholds the original auto-grade used. Returns a magnitude on the
+// -2 to +2 scale (Big Miss to Big Hit).
+function ktcScoreFor(playerName, draftYear, slot, baselines) {
+  const avg = avgKtcValueSinceDraft(playerName, draftYear);
+  if (!avg) return null;
+  const baseline = baselines[slot];
+  if (!baseline || baseline <= 0) return null;
+  const surplus = (avg.avg - baseline) / baseline;
+  if (surplus >= 0.5) return { magnitude: 2, surplus };
+  if (surplus >= 0.15) return { magnitude: 1, surplus };
+  if (surplus > -0.15) return { magnitude: 0, surplus };
+  if (surplus > -0.5) return { magnitude: -1, surplus };
+  return { magnitude: -2, surplus };
+}
+
+// Convert a -2..+2 magnitude (potentially decimal) to a 5-bucket grade.
+function bucketize(score) {
+  if (score >= 1.5) return { grade: "Big Hit", magnitude: 2 };
+  if (score >= 0.5) return { grade: "Hit", magnitude: 1 };
+  if (score > -0.5) return { grade: "Meh", magnitude: 0 };
+  if (score > -1.5) return { grade: "Miss", magnitude: -1 };
+  return { grade: "Big Miss", magnitude: -2 };
+}
+
+// Composite auto-grade combining the positional-finish score (60%) and the
+// KTC-value score (40%). Falls back to whichever signal is available when one
+// is missing.
+function compositeAutoGrade({ playerId, playerName, draftYear, slot, round }, ktcBaselines) {
+  const posCareer = top5AvgRankSinceDraft(playerId, draftYear);
+  const enoughSample = posCareer && posCareer.totalGames >= 4 && posCareer.avgRank != null;
+  const posMag = enoughSample
+    ? autoGradeByPosRank(posCareer.avgRank, round).magnitude
+    : null;
+  const ktc = ktcScoreFor(playerName, draftYear, slot, ktcBaselines);
+  let composite;
+  if (posMag != null && ktc != null) composite = 0.6 * posMag + 0.4 * ktc.magnitude;
+  else if (posMag != null) composite = posMag;
+  else if (ktc != null) composite = ktc.magnitude;
+  else return { grade: null, magnitude: 0, composite: null, posMag: null, ktc };
+  const { grade, magnitude } = bucketize(composite);
+  return {
+    grade, magnitude, composite,
+    posMag, posCareer,
+    ktcMag: ktc && ktc.magnitude,
+    ktcSurplus: ktc && ktc.surplus,
+  };
+}
+
+// Map a 5-bucket auto grade to the 3-bucket Hit/Meh/Miss scale the user uses
+// in the sheet (for comparison purposes).
+function collapseTo3Bucket(magnitude) {
+  if (magnitude >= 1) return "Hit";
+  if (magnitude <= -1) return "Miss";
+  return "Meh";
 }
 
 
