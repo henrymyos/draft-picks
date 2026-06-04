@@ -2889,10 +2889,8 @@ function renderDraftWorkspace() {
   const rightCol = el("div", {});
 
   const myPicksCard = el("div", { class: "card" }, el("h2", {}, myName + "'s Picks"));
-  if (!myUpcomingOveralls.length && mySlot != null) {
+  if (!myUpcomingOveralls.length) {
     myPicksCard.appendChild(el("div", { class: "empty" }, "No upcoming picks."));
-  } else if (mySlot == null) {
-    myPicksCard.appendChild(el("div", { class: "empty" }, "Not assigned a draft slot yet."));
   } else {
     myUpcomingOveralls.forEach(p => {
       const away = p.overall - nextOverall;
