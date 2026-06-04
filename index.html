@@ -1795,8 +1795,12 @@ function renderStats() {
       adpTable.appendChild(adpBody);
       adpCard.appendChild(adpTable);
 
-      const steals = rows.slice().sort((a, b) => b.weightedDiff - a.weightedDiff).slice(0, 8);
-      const reaches = rows.slice().sort((a, b) => a.weightedDiff - b.weightedDiff).slice(0, 8);
+      // 2020 KTC snapshot is months after the draft (KTC wasn't archived
+      // earlier), so its ADP doesn't reflect what was actually consensus on
+      // draft night. Skip 2020 here, but keep it in the per-drafter aggregate.
+      const stealReachPool = rows.filter(r => r.year !== 2020);
+      const steals = stealReachPool.slice().sort((a, b) => b.weightedDiff - a.weightedDiff).slice(0, 8);
+      const reaches = stealReachPool.slice().sort((a, b) => a.weightedDiff - b.weightedDiff).slice(0, 8);
       adpCard.appendChild(el("h3", { style: "margin-top:20px" }, "Biggest steals (taken much later than ADP)"));
       adpCard.appendChild(renderAdpList(steals));
       adpCard.appendChild(el("h3", { style: "margin-top:20px" }, "Biggest reaches (taken much earlier than ADP)"));
