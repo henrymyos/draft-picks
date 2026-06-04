@@ -1824,9 +1824,20 @@ function renderStats() {
         meta.appendChild(el("span", {}, `${year}: ${date}`));
       }
       meta.appendChild(el("span", { style: "color:var(--muted)" }, ` (${ct})`));
+      if (year === "2023") {
+        meta.appendChild(el("span", { style: "color: var(--meh)" }, " *"));
+      }
       if (info.error) meta.appendChild(el("span", { class: "delta-neg" }, ` — ${info.error}`));
     });
     adpCard.appendChild(meta);
+
+    adpCard.appendChild(el("div", { class: "pct", style: "margin-top:10px" },
+      el("span", { style: "color: var(--meh)" }, "* "),
+      "2023 has no rookie-rankings page snapshot in May/June. Numbers come from " +
+      "the dynasty root on Jun 11. If you click the link and switch to the " +
+      "Rookies tab, Wayback redirects to the closest rookie page (Mar 16, " +
+      "pre-NFL) — those ranks won't match what the site uses."
+    ));
 
     adpCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
       "ADP = KTC superflex rookie rank. Diff = actual pick − ADP " +
