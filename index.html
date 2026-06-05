@@ -817,6 +817,9 @@ let state = {
     data: null,
     ktcLive: null,
     ktcDynasty: null,
+    flockLive: null,
+    flockError: null,
+    rankSource: (() => { try { return localStorage.getItem("dp.rankSource") || "ktc"; } catch { return "ktc"; } })(),
     loading: false,
     error: null,
     myUserId: (() => { try { return localStorage.getItem(LS_DRAFT_USER); } catch { return null; } })(),
@@ -2527,17 +2530,25 @@ async function loadDraftLive() {
     const fetches = [
       fetch("/api/draft-live?_=" + Date.now(), { cache: "no-store" }),
       fetch("/api/ktc-live", { cache: "no-store" }),
+      fetch("/api/flock-live?_=" + Date.now(), { cache: "no-store" }),
     ];
-    // KTC dynasty data changes slowly — only fetch on first load or manual refresh.
     if (!state.draft.ktcDynasty) {
       fetches.push(fetch("/api/ktc-dynasty", { cache: "no-store" }));
     }
     const results = await Promise.all(fetches);
-    const [draftRes, ktcRes, dynRes] = results;
+    const [draftRes, ktcRes, flockRes, dynRes] = results;
     if (!draftRes.ok) throw new Error("draft " + draftRes.status);
     if (!ktcRes.ok) throw new Error("ktc " + ktcRes.status);
     state.draft.data = await draftRes.json();
     state.draft.ktcLive = await ktcRes.json();
+    // Flock is optional — don't fail the whole load on it
+    state.draft.flockError = null;
+    if (flockRes.ok) {
+      state.draft.flockLive = await flockRes.json();
+    } else {
+      try { state.draft.flockError = (await flockRes.json()).error || ("HTTP " + flockRes.status); }
+      catch { state.draft.flockError = "HTTP " + flockRes.status; }
+    }
     if (dynRes) {
       if (!dynRes.ok) throw new Error("dynasty " + dynRes.status);
       state.draft.ktcDynasty = await dynRes.json();
@@ -2702,28 +2713,45 @@ function renderDraftWorkspace() {
     main.appendChild(banner);
   }
 
-  // KTC-ranked available rookies + recommendations
+  // Ranking source: KTC superflex value OR FlockFantasy expert avg rank.
+  const source = state.draft.rankSource === "flock" && state.draft.flockLive ? "flock" : "ktc";
   const ktc = (state.draft.ktcLive && state.draft.ktcLive.players) || [];
+  const flock = (state.draft.flockLive && state.draft.flockLive.players) || [];
   const ktcByName = {};
   ktc.forEach(p => { ktcByName[p.normName] = p; });
+  const flockByName = {};
+  flock.forEach(p => { flockByName[p.normName] = p; });
 
-  // Picked Sleeper player_ids
   const pickedIds = new Set(d.picks.map(p => p.player_id).filter(Boolean));
-
-  // Build available rookie pool by intersecting Sleeper's rookie list with KTC
-  // ranking. If a rookie isn't on KTC we rank them at the bottom (unranked).
   const rookieByName = {};
   d.rookies.forEach(r => { rookieByName[ktcNorm(r.name)] = r; });
 
+  // Build available pool from chosen source. Each entry exposes a uniform
+  // `score` (higher = better) so sorting/recommendation logic stays simple.
+  // KTC uses raw superflex value; Flock uses 1 / averageRank so #1 wins.
   const availablePool = [];
-  ktc.forEach(p => {
+  const sourceList = source === "flock" ? flock : ktc;
+  sourceList.forEach(p => {
     const sleeperRookie = rookieByName[p.normName];
     if (!sleeperRookie) return;
     if (pickedIds.has(sleeperRookie.player_id)) return;
+    const ktcEntry = ktcByName[p.normName];
+    const flockEntry = flockByName[p.normName];
+    const score = source === "flock"
+      ? (flockEntry && flockEntry.averageRank > 0 ? 10000 / flockEntry.averageRank : 0)
+      : (ktcEntry ? ktcEntry.value : 0);
     availablePool.push({
-      ...p,
-      player_id: sleeperRookie.player_id,
+      name: p.name,
+      normName: p.normName,
+      position: p.position,
       team: sleeperRookie.team || p.team,
+      player_id: sleeperRookie.player_id,
+      value: score,
+      rookieRank: p.rookieRank,
+      ktcRank: ktcEntry ? ktcEntry.rookieRank : null,
+      ktcValue: ktcEntry ? ktcEntry.value : null,
+      flockRank: flockEntry ? flockEntry.rookieRank : null,
+      flockAvg: flockEntry ? flockEntry.averageRank : null,
     });
   });
 
@@ -2770,7 +2798,36 @@ function renderDraftWorkspace() {
   const recCard = el("div", { class: "card" },
     el("h2", {}, "Recommendation ", statusBadge)
   );
-  // Mode toggle
+
+  // Ranking source toggle: KTC vs Flock (only enabled if Flock loaded ok)
+  const flockReady = !!state.draft.flockLive;
+  const srcToggle = el("div", { class: "toggle-row" });
+  const ktcBtn = el("button", { class: source === "ktc" ? "active" : "" }, "KTC value");
+  const flockBtn = el("button", {
+    class: source === "flock" ? "active" : "",
+    title: flockReady ? "FlockFantasy expert average rank" : (state.draft.flockError || "Flock not loaded"),
+    style: flockReady ? "" : "opacity:0.5; cursor:not-allowed",
+  }, "Flock avg rank");
+  ktcBtn.addEventListener("click", () => {
+    state.draft.rankSource = "ktc";
+    try { localStorage.setItem("dp.rankSource", "ktc"); } catch {}
+    render();
+  });
+  flockBtn.addEventListener("click", () => {
+    if (!flockReady) return;
+    state.draft.rankSource = "flock";
+    try { localStorage.setItem("dp.rankSource", "flock"); } catch {}
+    render();
+  });
+  srcToggle.appendChild(ktcBtn);
+  srcToggle.appendChild(flockBtn);
+  recCard.appendChild(srcToggle);
+  if (state.draft.flockError) {
+    recCard.appendChild(el("div", { class: "pct", style: "color: var(--miss); margin-bottom:8px" },
+      "Flock unavailable: " + state.draft.flockError + ". Re-paste FLOCK_TOKEN env on Vercel."));
+  }
+
+  // Mode toggle (Best Available vs Position-Need)
   const toggle = el("div", { class: "toggle-row" });
   const baBtn = el("button", { class: state.draft.posMode ? "" : "active" }, "Best Available");
   const posBtn = el("button", { class: state.draft.posMode ? "active" : "" }, "Position-Need");
@@ -2815,7 +2872,9 @@ function renderDraftWorkspace() {
         playerLine.appendChild(el("span", { class: "pos-chip " + positionClass(p.position) }, p.position));
       }
       card.appendChild(playerLine);
-      const metaBits = [`KTC #${p.rookieRank}`, `value ${p.value}`];
+      const metaBits = [];
+      if (p.ktcRank != null) metaBits.push(`KTC #${p.ktcRank}`);
+      if (p.flockAvg != null) metaBits.push(`Flock ${p.flockAvg.toFixed(1)}`);
       if (p.team) metaBits.push(p.team);
       if (state.draft.posMode && posBoost[p.position] !== 1) {
         metaBits.push(`need boost ×${posBoost[p.position].toFixed(2)}`);
@@ -2839,7 +2898,13 @@ function renderDraftWorkspace() {
           p.position ? el("span", { class: "pos-chip " + positionClass(p.position), style: "margin-left:8px" }, p.position) : null,
         ),
         el("div", { class: "pick-history-by" },
-          `KTC ${p.rookieRank} · ${p.value}` + (p.team ? "  ·  " + p.team : ""),
+          (() => {
+            const bits = [];
+            if (p.ktcRank != null) bits.push(`KTC ${p.ktcRank}`);
+            if (p.flockAvg != null) bits.push(`Flock ${p.flockAvg.toFixed(1)}`);
+            if (p.team) bits.push(p.team);
+            return bits.join("  ·  ");
+          })(),
         ),
       );
       availCard.appendChild(row);
