@@ -766,6 +766,7 @@
     <button data-view="person">By Person</button>
     <button data-view="leaderboard">Leaderboard</button>
     <button data-view="rankings">Rankings</button>
+    <button data-view="rosters">Rosters</button>
     <button data-view="stats">Stats</button>
     <button data-view="trades">Trades</button>
   </nav>
@@ -837,6 +838,7 @@ let state = {
   overviewSort: { col: "year", dir: "asc" },
   leaderboardSort: { col: "hitPct", dir: "desc" },
   rankingsSort: "composite",  // "composite" | "value" | "contender"
+  rosterTeam: null,            // selected user_id on the Rosters tab
   leaderboardRound: null,
   statsRound: null,
   statsInsightDrafter: null,
@@ -1530,6 +1532,209 @@ function renderRankings() {
     "Composite < 0.4 → Contender, 0.4-0.7 → Middler, ≥ 0.7 → Reloader."
   ));
   main.appendChild(card);
+}
+
+// Asset tier from KTC superflex value alone. Tuned to land most starter-grade
+// players in Cornerstone / Tradeable and most fringe pieces in Wait & See /
+// Droppable. Same labels Sleeper Portfolio uses.
+function classifyAsset(ktcValue) {
+  if (ktcValue == null) ktcValue = 0;
+  if (ktcValue >= 7500) return { label: "Cornerstone", chip: "auto-big-hit" };
+  if (ktcValue >= 3500) return { label: "Tradeable", chip: "auto-meh" };
+  if (ktcValue >= 1500) return { label: "Wait & See", chip: "auto-hit" };
+  return { label: "Droppable", chip: "auto-miss" };
+}
+
+function renderRosters() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  ensureSleeperLoaded();
+  ensureTradeHistoryLoaded();
+
+  if (!state.sleeper) {
+    main.appendChild(el("div", { class: "empty" },
+      state.sleeperError ? "Sleeper error: " + state.sleeperError : "Loading Sleeper data…"));
+    return;
+  }
+  if (!state.tradeHistory || !state.tradeHistory.snapshots || !state.tradeHistory.snapshots.length) {
+    main.appendChild(el("div", { class: "empty" },
+      state.tradeHistoryError ? "KTC error: " + state.tradeHistoryError : "Loading KTC values…"));
+    return;
+  }
+
+  const latestSeason = state.sleeper.seasons[state.sleeper.seasons.length - 1];
+  const latestSnap = state.tradeHistory.snapshots[state.tradeHistory.snapshots.length - 1];
+  const ktcPlayers = latestSnap.players || {};
+
+  // Team selector
+  const users = latestSeason.users.slice().sort((a, b) =>
+    canonicalOwnerName(userDisplay(a)).localeCompare(canonicalOwnerName(userDisplay(b)))
+  );
+  if (state.rosterTeam == null && users.length) state.rosterTeam = users[0].user_id;
+  const opts = users.map(u => ({ value: u.user_id, label: canonicalOwnerName(userDisplay(u)) }));
+
+  const controls = el("div", { class: "controls" });
+  controls.appendChild(customSelect(opts, state.rosterTeam, v => {
+    state.rosterTeam = v;
+    render();
+  }));
+  main.appendChild(controls);
+
+  const selectedUser = users.find(u => u.user_id === state.rosterTeam);
+  const selectedRoster = latestSeason.rosters.find(r => r.owner_id === state.rosterTeam);
+  if (!selectedRoster) {
+    main.appendChild(el("div", { class: "empty" }, "Roster not found."));
+    return;
+  }
+  const selectedName = canonicalOwnerName(userDisplay(selectedUser));
+
+  // Build league-wide per-position value totals to find weak / strong positions.
+  const POS = ["QB", "RB", "WR", "TE"];
+  const valueByPosByRoster = {};
+  latestSeason.rosters.forEach(r => {
+    const byPos = { QB: 0, RB: 0, WR: 0, TE: 0 };
+    (r.players || []).forEach(pid => {
+      const p = state.sleeper.players[pid];
+      if (!p || !POS.includes(p.position)) return;
+      const v = ktcPlayers[ktcNormalizeName(p.name)] || 0;
+      byPos[p.position] += v;
+    });
+    valueByPosByRoster[r.roster_id] = byPos;
+  });
+  const leagueAvgByPos = { QB: 0, RB: 0, WR: 0, TE: 0 };
+  Object.values(valueByPosByRoster).forEach(b => POS.forEach(p => leagueAvgByPos[p] += b[p]));
+  POS.forEach(p => leagueAvgByPos[p] /= latestSeason.rosters.length || 1);
+
+  function isWeakAt(rosterId, position) {
+    return valueByPosByRoster[rosterId][position] < leagueAvgByPos[position] * 0.85;
+  }
+  function isStrongAt(rosterId, position) {
+    return valueByPosByRoster[rosterId][position] > leagueAvgByPos[position] * 1.10;
+  }
+
+  // Helper: enrich a player_id with KTC value, name, position, tier.
+  function enrich(pid) {
+    const p = state.sleeper.players[pid];
+    if (!p) return null;
+    const v = ktcPlayers[ktcNormalizeName(p.name)] || 0;
+    return { pid, name: p.name, position: p.position, value: v, tier: classifyAsset(v) };
+  }
+
+  const myAssets = (selectedRoster.players || []).map(enrich).filter(Boolean);
+
+  // ===== Roster card grouped by classification =====
+  const rosterCard = el("div", { class: "card" }, el("h2", {}, selectedName + " — Roster"));
+  const TIER_ORDER = ["Cornerstone", "Tradeable", "Wait & See", "Droppable"];
+  const counts = { Cornerstone: 0, Tradeable: 0, "Wait & See": 0, Droppable: 0 };
+  myAssets.forEach(a => { counts[a.tier.label]++; });
+  const lede = el("div", { class: "card-lede" });
+  lede.innerHTML = TIER_ORDER.map(t => `<strong>${counts[t]}</strong> ${t}`).join("  ·  ");
+  rosterCard.appendChild(lede);
+
+  TIER_ORDER.forEach(tier => {
+    const tierAssets = myAssets.filter(a => a.tier.label === tier).sort((a, b) => b.value - a.value);
+    if (!tierAssets.length) return;
+    rosterCard.appendChild(el("div", { class: "round-header" }, tier + " (" + tierAssets.length + ")"));
+    tierAssets.forEach(a => {
+      const row = el("div", { class: "pick-history-row" },
+        el("div", { class: "pick-history-slot" }, ""),
+        el("div", {},
+          a.name,
+          a.position ? el("span", { class: "pos-chip " + positionClass(a.position), style: "margin-left:8px" }, a.position) : null,
+          el("span", { class: "auto-grade-chip " + a.tier.chip, style: "margin-left:8px" }, a.tier.label),
+        ),
+        el("div", { class: "pick-history-by" }, a.value ? a.value.toLocaleString() : "—"),
+      );
+      rosterCard.appendChild(row);
+    });
+  });
+  main.appendChild(rosterCard);
+
+  // ===== Suggested Trades card =====
+  const tradeCard = el("div", { class: "card" }, el("h2", {}, "Suggested Trades"));
+
+  // Generate 1-for-1 swaps that fill mutual positional needs and balance KTC value.
+  // Bias: prefer the receiver helping a weak position with their tradeable surplus.
+  const trades = [];
+  const tradeableSelf = myAssets.filter(a =>
+    (a.tier.label === "Tradeable" || a.tier.label === "Wait & See") && a.value >= 1500
+  );
+  latestSeason.rosters.forEach(other => {
+    if (other.roster_id === selectedRoster.roster_id) return;
+    const otherUser = latestSeason.users.find(u => u.user_id === other.owner_id);
+    const otherName = otherUser ? canonicalOwnerName(userDisplay(otherUser)) : "—";
+    const otherAssets = (other.players || []).map(enrich).filter(Boolean);
+    const tradeableOther = otherAssets.filter(a =>
+      (a.tier.label === "Tradeable" || a.tier.label === "Wait & See") && a.value >= 1500
+    );
+    tradeableSelf.forEach(mine => {
+      tradeableOther.forEach(theirs => {
+        if (mine.position === theirs.position) return;
+        if (!isWeakAt(selectedRoster.roster_id, theirs.position)) return;
+        if (!isWeakAt(other.roster_id, mine.position)) return;
+        const max = Math.max(mine.value, theirs.value);
+        if (!max) return;
+        const diff = Math.abs(mine.value - theirs.value) / max;
+        if (diff > 0.15) return;
+        trades.push({
+          partnerName: otherName,
+          send: mine,
+          recv: theirs,
+          diffPct: diff,
+          fairness: 1 - diff,
+        });
+      });
+    });
+  });
+  // Dedupe so the same partner doesn't dominate the list.
+  const seenPartner = {};
+  const topTrades = trades
+    .sort((a, b) => b.fairness - a.fairness)
+    .filter(t => {
+      seenPartner[t.partnerName] = (seenPartner[t.partnerName] || 0) + 1;
+      return seenPartner[t.partnerName] <= 2;  // max 2 trades per partner
+    })
+    .slice(0, 8);
+
+  if (!topTrades.length) {
+    tradeCard.appendChild(el("div", { class: "empty" },
+      "No mutually-beneficial 1-for-1 trades found within 15% value. Try widening the tolerance or check back after roster moves."));
+  } else {
+    topTrades.forEach(t => {
+      const block = el("div", { class: "trade-block" });
+      block.appendChild(el("div", { class: "trade-header" },
+        el("span", { class: "trade-date" }, "with " + t.partnerName),
+        el("span", { class: "trade-meta" }, `${Math.round(t.fairness * 100)}% fair`),
+      ));
+      const cols = el("div", { class: "trade-cols" });
+      const sendCol = el("div", { class: "trade-col" },
+        el("div", { class: "trade-col-label" }, "You send"));
+      sendCol.appendChild(el("div", { class: "trade-line" },
+        el("span", { class: "trade-player" }, t.send.name),
+        el("span", { class: "pos-chip " + positionClass(t.send.position) }, t.send.position),
+        el("span", { class: "trade-where" }, t.send.value.toLocaleString()),
+      ));
+      const recvCol = el("div", { class: "trade-col" },
+        el("div", { class: "trade-col-label" }, "You get"));
+      recvCol.appendChild(el("div", { class: "trade-line" },
+        el("span", { class: "trade-player" }, t.recv.name),
+        el("span", { class: "pos-chip " + positionClass(t.recv.position) }, t.recv.position),
+        el("span", { class: "trade-where" }, t.recv.value.toLocaleString()),
+      ));
+      cols.appendChild(sendCol);
+      cols.appendChild(recvCol);
+      block.appendChild(cols);
+      block.appendChild(el("div", { class: "pct", style: "margin-top:6px" },
+        `You're weak at ${t.recv.position}; ${t.partnerName} is weak at ${t.send.position}.`));
+      tradeCard.appendChild(block);
+    });
+  }
+  tradeCard.appendChild(el("div", { class: "pct", style: "margin-top:10px" },
+    "Values are KTC superflex dynasty values from the latest history snapshot. " +
+    "Trades shown are 1-for-1 swaps within 15% total value where both sides fill a positional weakness (each side is below 85% of the league average at the position they receive). " +
+    "Showing up to 2 ideas per partner, top 8 overall by fairness."
+  ));
+  main.appendChild(tradeCard);
 }
 
 function renderStats() {
@@ -3291,6 +3496,7 @@ function render() {
     case "person": renderPersonView(); break;
     case "leaderboard": renderLeaderboard(); break;
     case "rankings": renderRankings(); break;
+    case "rosters": renderRosters(); break;
     case "stats": renderStats(); break;
     case "trades": renderTrades(); break;
     default: renderOverview();
