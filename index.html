@@ -762,11 +762,8 @@
   </div>
   <nav class="tabs" id="statsTabs">
     <button data-view="overview" class="active">Overview</button>
-    <button data-view="year">By Year</button>
-    <button data-view="person">By Person</button>
-    <button data-view="leaderboard">Leaderboard</button>
-    <button data-view="rankings">Rankings</button>
-    <button data-view="rosters">Rosters</button>
+    <button data-view="leaderboard">Drafters</button>
+    <button data-view="teams">Teams</button>
     <button data-view="stats">Stats</button>
     <button data-view="trades">Trades</button>
   </nav>
@@ -838,6 +835,7 @@ let state = {
   overviewSort: { col: "year", dir: "asc" },
   leaderboardSort: { col: "hitPct", dir: "desc" },
   rankingsSort: "composite",  // "composite" | "value" | "contender"
+  teamsSubview: (() => { try { return localStorage.getItem("dp.teamsSubview") || "rankings"; } catch { return "rankings"; } })(),
   rosterTeam: null,            // selected user_id on the Rosters tab
   flockLive: null,             // shared flock-live response for non-draft views
   flockLiveLoading: false,
@@ -1452,6 +1450,43 @@ function classifyManager(composite) {
   return { label: "Reloader", pill: "pill-weak" };
 }
 
+function renderTeams() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  // Sub-tab toggle that switches between League Power and Roster Detail.
+  const bar = el("div", { class: "toggle-row", style: "max-width: 360px; margin-bottom: 16px" });
+  const subs = [
+    { key: "rankings", label: "League Power" },
+    { key: "rosters", label: "Roster Detail" },
+  ];
+  subs.forEach(s => {
+    const btn = el("button", { class: state.teamsSubview === s.key ? "active" : "" }, s.label);
+    btn.addEventListener("click", () => {
+      state.teamsSubview = s.key;
+      try { localStorage.setItem("dp.teamsSubview", s.key); } catch {}
+      render();
+    });
+    bar.appendChild(btn);
+  });
+  main.appendChild(bar);
+  // Delegate body to the existing renderer. Each one wipes main and rebuilds,
+  // but only after our toggle is appended — so we re-add the toggle after.
+  if (state.teamsSubview === "rosters") renderRosters();
+  else renderRankings();
+  // The delegated renderers above call main.innerHTML = "" so we need to put
+  // the toggle back on top once they finish.
+  const newBar = bar.cloneNode(true);
+  // Re-bind click handlers on the cloned bar.
+  newBar.querySelectorAll("button").forEach((btn, i) => {
+    btn.addEventListener("click", () => {
+      state.teamsSubview = subs[i].key;
+      try { localStorage.setItem("dp.teamsSubview", subs[i].key); } catch {}
+      render();
+    });
+  });
+  main.insertBefore(newBar, main.firstChild);
+}
+
 function renderRankings() {
   const main = document.getElementById("main");
   main.innerHTML = "";
@@ -2025,66 +2060,9 @@ function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
 
-  // ----- All-time round breakdown -----
+  // ----- Year × Round matrix -----
   main.appendChild(el("div", { class: "section-header" }, "League Overview",
     el("span", { class: "section-sub" }, "How the league as a whole has drafted")));
-  const roundCard = el("div", { class: "card" }, el("h2", {}, "By Round (all years)"));
-  {
-    const rounds = [1, 2, 3].map(rd => ({ rd, t: tally(state.picks.filter(p => p.round === rd)) }))
-      .filter(r => r.t.graded);
-    if (rounds.length >= 2) {
-      const sorted = rounds.slice().sort((a, b) => (b.t.hit / b.t.graded) - (a.t.hit / a.t.graded));
-      const best = sorted[0], worst = sorted[sorted.length - 1];
-      const gap = (best.t.hit / best.t.graded - worst.t.hit / worst.t.graded) * 100;
-      const lede = el("div", { class: "card-lede" });
-      lede.innerHTML = `Round <strong>${best.rd}</strong> hits ` +
-        `(${(best.t.hit / best.t.graded * 100).toFixed(1)}%); Round <strong>${worst.rd}</strong> doesn't ` +
-        `(${(worst.t.hit / worst.t.graded * 100).toFixed(1)}%). Gap: ${gap.toFixed(1)} points.`;
-      roundCard.appendChild(lede);
-    }
-  }
-  const roundTable = el("table", {},
-    el("thead", {}, el("tr", {},
-      el("th", {}, "Round"),
-      el("th", { class: "num" }, "Picks"),
-      el("th", { class: "num tight" }, "Hit"),
-      el("th", { class: "num tight" }, "Meh"),
-      el("th", { class: "num tight" }, "Miss"),
-      el("th", { class: "num tight gap-left" }, "Hit %"),
-      el("th", { class: "num tight" }, "Hit + Meh"),
-      el("th", { class: "mobile-hide" }, "Mix"),
-    )),
-  );
-  const rtbody = el("tbody", {});
-  const allRounds = tally(state.picks.filter(p => p.round != null));
-  rtbody.appendChild(el("tr", { class: "pos-total" },
-    el("td", {}, "All Rounds"),
-    el("td", { class: "num" }, String(allRounds.total)),
-    el("td", { class: "num tight" }, String(allRounds.hit)),
-    el("td", { class: "num tight" }, String(allRounds.meh)),
-    el("td", { class: "num tight" }, String(allRounds.miss)),
-    el("td", { class: "num tight gap-left" }, formatPct(allRounds.hit, allRounds.graded)),
-    el("td", { class: "num tight" }, formatPct(allRounds.hit + allRounds.meh, allRounds.graded)),
-    el("td", { class: "mobile-hide" }, renderBar(allRounds)),
-  ));
-  [1, 2, 3].forEach(rd => {
-    const t = tally(state.picks.filter(p => p.round === rd));
-    rtbody.appendChild(el("tr", {},
-      el("td", {}, "Round " + rd),
-      el("td", { class: "num" }, String(t.total)),
-      el("td", { class: "num tight" }, String(t.hit)),
-      el("td", { class: "num tight" }, String(t.meh)),
-      el("td", { class: "num tight" }, String(t.miss)),
-      el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
-      el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
-      el("td", { class: "mobile-hide" }, renderBar(t)),
-    ));
-  });
-  roundTable.appendChild(rtbody);
-  roundCard.appendChild(roundTable);
-  main.appendChild(roundCard);
-
-  // ----- Year × Round matrix -----
   const matrixCard = el("div", { class: "card" }, el("h2", {}, "Round by Year"));
   const matrixTable = el("table", {},
     el("thead", {}, el("tr", {},
@@ -2173,43 +2151,6 @@ function renderStats() {
   tierTable.appendChild(ttbody);
   tierCard.appendChild(tierTable);
   main.appendChild(tierCard);
-
-  // ----- Per-slot breakdown (1.01 through 3.12 across all years) -----
-  const slotCard = el("div", { class: "card" }, el("h2", {}, "By Pick Slot"));
-  const slotTable = el("table", {},
-    el("thead", {}, el("tr", {},
-      el("th", {}, "Slot"),
-      el("th", { class: "num" }, "Picks"),
-      el("th", { class: "num tight" }, "Hit"),
-      el("th", { class: "num tight" }, "Meh"),
-      el("th", { class: "num tight" }, "Miss"),
-      el("th", { class: "num tight gap-left" }, "Hit %"),
-      el("th", { class: "num tight" }, "Hit + Meh"),
-      el("th", { class: "mobile-hide" }, "Mix"),
-    )),
-  );
-  const stbody = el("tbody", {});
-  [1, 2, 3].forEach(rd => {
-    for (let s = 1; s <= 12; s++) {
-      const sub = state.picks.filter(p => p.round === rd && p.pickInRound === s);
-      if (!sub.length) continue;
-      const t = tally(sub);
-      const slot = `${rd}.${String(s).padStart(2, "0")}`;
-      stbody.appendChild(el("tr", {},
-        el("td", {}, slot),
-        el("td", { class: "num" }, String(t.total)),
-        el("td", { class: "num tight" }, String(t.hit)),
-        el("td", { class: "num tight" }, String(t.meh)),
-        el("td", { class: "num tight" }, String(t.miss)),
-        el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
-        el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
-        el("td", { class: "mobile-hide" }, renderBar(t)),
-      ));
-    }
-  });
-  slotTable.appendChild(stbody);
-  slotCard.appendChild(slotTable);
-  main.appendChild(slotCard);
 
   // ----- Position breakdown (fixed mapping: red=QB, green=RB, blue=WR, orange=TE) -----
   const posCard = el("div", { class: "card" }, el("h2", {}, "By Position"));
@@ -3825,6 +3766,7 @@ function render() {
     case "leaderboard": renderLeaderboard(); break;
     case "rankings": renderRankings(); break;
     case "rosters": renderRosters(); break;
+    case "teams": renderTeams(); break;
     case "stats": renderStats(); break;
     case "trades": renderTrades(); break;
     default: renderOverview();
