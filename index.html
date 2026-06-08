@@ -1680,7 +1680,8 @@ function renderRosters() {
     const norm = ktcNormalizeName(p.name);
     const ktc = ktcPlayers[norm] || 0;
     const flock = flockByName[norm] || 0;
-    const blended = ktc && flock ? (ktc + flock) / 2 : (ktc || flock);
+    // Weighted blend: 70% Flock expert avg, 30% KTC.
+    const blended = ktc && flock ? (0.7 * flock + 0.3 * ktc) : (ktc || flock);
     return {
       kind: "player",
       id: pid,
@@ -1716,6 +1717,50 @@ function renderRosters() {
   POS.forEach(p => leagueAvgByPos[p] /= latestSeason.rosters.length || 1);
   function isWeakAt(rosterId, position) {
     return valueByPosByRoster[rosterId][position] < leagueAvgByPos[position] * 0.85;
+  }
+
+  // Starter-need fallback: for a roster with no positions below 85% of league
+  // avg, find the position whose top starter(s) rank lowest in the league —
+  // i.e. the weakest spot of their starting lineup. Used to relax the
+  // "must fill a weak position" constraint when nothing is truly weak.
+  // Returns a Set of positions to prioritize for incoming assets.
+  const STARTING_SLOT_COUNT = { QB: 2, RB: 3, WR: 4, TE: 1 };  // approx for SF
+  const starterValByPosByRoster = {};
+  latestSeason.rosters.forEach(r => {
+    const byPos = { QB: [], RB: [], WR: [], TE: [] };
+    (r.players || []).forEach(pid => {
+      const p = state.sleeper.players[pid];
+      if (!p || !POS.includes(p.position)) return;
+      const v = ktcPlayers[ktcNormalizeName(p.name)] || 0;
+      byPos[p.position].push(v);
+    });
+    const starters = { QB: 0, RB: 0, WR: 0, TE: 0 };
+    POS.forEach(pos => {
+      const sorted = byPos[pos].slice().sort((a, b) => b - a);
+      const n = STARTING_SLOT_COUNT[pos];
+      starters[pos] = sorted.slice(0, n).reduce((a, b) => a + b, 0);
+    });
+    starterValByPosByRoster[r.roster_id] = starters;
+  });
+  // Per-position starter-value rank across all rosters (1 = best, n = worst).
+  const starterRankByPos = { QB: {}, RB: {}, WR: {}, TE: {} };
+  POS.forEach(pos => {
+    const sorted = latestSeason.rosters
+      .slice()
+      .sort((a, b) => starterValByPosByRoster[b.roster_id][pos] - starterValByPosByRoster[a.roster_id][pos]);
+    sorted.forEach((r, i) => { starterRankByPos[pos][r.roster_id] = i + 1; });
+  });
+  function weakestStarterPositions(rosterId) {
+    // Find the 1-2 positions where this roster's starter value ranks worst.
+    const ranked = POS.map(pos => ({ pos, rank: starterRankByPos[pos][rosterId] }))
+      .sort((a, b) => b.rank - a.rank);
+    return new Set(ranked.slice(0, 2).map(r => r.pos));
+  }
+  // Effective need set for a roster: real weaknesses if any, else weakest starter positions.
+  function needSetFor(rosterId) {
+    const realWeak = POS.filter(p => isWeakAt(rosterId, p));
+    if (realWeak.length) return new Set(realWeak);
+    return weakestStarterPositions(rosterId);
   }
 
   const myAssets = assetsForRoster(selectedRoster.roster_id);
@@ -1757,7 +1802,7 @@ function renderRosters() {
       (a.tier.label === "Tradeable" || a.tier.label === "Wait & See") && a.value >= 1000
     );
   }
-  function rosterImpact(rosterId, gives, gets) {
+  function rosterImpact(rosterId, gives, gets, needSet) {
     const before = { ...valueByPosByRoster[rosterId] };
     POS.forEach(pos => { before[pos] = before[pos] || 0; });
     const after = { ...before };
@@ -1767,10 +1812,10 @@ function renderRosters() {
     gets.forEach(a => {
       if (a.kind === "player" && POS.includes(a.position)) after[a.position] += a.ktc || 0;
     });
+    // A "fit" = a position in the roster's need set that improved.
     const fits = [];
     POS.forEach(pos => {
-      const wasWeak = before[pos] < leagueAvgByPos[pos] * 0.85;
-      if (wasWeak && after[pos] > before[pos]) fits.push(pos);
+      if (needSet.has(pos) && after[pos] > before[pos]) fits.push(pos);
     });
     return { before, after, fits };
   }
@@ -1800,6 +1845,8 @@ function renderRosters() {
   }
 
   const myMovable = movablePool(myAssets);
+  const myNeed = needSetFor(selectedRoster.roster_id);
+  const myHasRealWeakness = POS.some(p => isWeakAt(selectedRoster.roster_id, p));
   const allTrades = [];
   latestSeason.rosters.forEach(other => {
     if (other.roster_id === selectedRoster.roster_id) return;
@@ -1807,23 +1854,37 @@ function renderRosters() {
     const otherName = otherUser ? canonicalOwnerName(userDisplay(otherUser)) : "—";
     const otherAssets = assetsForRoster(other.roster_id);
     const theirMovable = movablePool(otherAssets);
-    const myTrimmed = myMovable.slice().sort((a, b) => b.value - a.value).slice(0, 15);
-    const theirTrimmed = theirMovable.slice().sort((a, b) => b.value - a.value).slice(0, 15);
-    const mySides = combos(myTrimmed, 1).concat(combos(myTrimmed, 2));
-    const theirSides = combos(theirTrimmed, 1).concat(combos(theirTrimmed, 2));
+    const theirNeed = needSetFor(other.roster_id);
+    // Trim per side: top 12 movables. With 1-2-3 sized combos that's
+    // C(12,1)+C(12,2)+C(12,3) = 12+66+220 = 298 sides per roster. Cross-product
+    // per partner ~89k worst case; with weak-pos and ID-overlap early exits
+    // and 11 partners we land around ~1M evaluated swaps. Fine on the client.
+    const myTrimmed = myMovable.slice().sort((a, b) => b.value - a.value).slice(0, 12);
+    const theirTrimmed = theirMovable.slice().sort((a, b) => b.value - a.value).slice(0, 12);
+    const mySides = [
+      ...combos(myTrimmed, 1),
+      ...combos(myTrimmed, 2),
+      ...combos(myTrimmed, 3),
+    ];
+    const theirSides = [
+      ...combos(theirTrimmed, 1),
+      ...combos(theirTrimmed, 2),
+      ...combos(theirTrimmed, 3),
+    ];
 
     mySides.forEach(gives => {
       const gaveWeakPos = gives.some(g => g.kind === "player" && isWeakAt(selectedRoster.roster_id, g.position));
       if (gaveWeakPos) return;
+      const myGivesIds = new Set(gives.map(g => g.id));
       const myGivesSum = sumValues(gives);
       theirSides.forEach(gets => {
-        if (gives.some(g => gets.some(t => g.id === t.id))) return;
+        // Overlap impossible (different rosters), so skip the check.
         const gaveTheirWeak = gets.some(g => g.kind === "player" && isWeakAt(other.roster_id, g.position));
         if (gaveTheirWeak) return;
         const getsSum = sumValues(gets);
         if (!bothCalcsAgree(myGivesSum, getsSum)) return;
-        const myFinal = rosterImpact(selectedRoster.roster_id, gives, gets);
-        const theirFinal = rosterImpact(other.roster_id, gets, gives);
+        const myFinal = rosterImpact(selectedRoster.roster_id, gives, gets, myNeed);
+        const theirFinal = rosterImpact(other.roster_id, gets, gives, theirNeed);
         if (!myFinal.fits.length || !theirFinal.fits.length) return;
         const ktcDiff = Math.abs(myGivesSum.ktc - getsSum.ktc) / Math.max(myGivesSum.ktc, getsSum.ktc);
         const flockDiff = (myGivesSum.flock && getsSum.flock)
@@ -1833,7 +1894,9 @@ function renderRosters() {
         const fairness = 1 - worstDiff;
         const fitScore = (myFinal.fits.length + theirFinal.fits.length);
         const sizeScore = Math.min(1, (myGivesSum.ktc + getsSum.ktc) / 20000);
-        const score = fairness * 0.6 + (fitScore / 4) * 0.25 + sizeScore * 0.15;
+        // Slightly down-weight larger combos to bias toward simpler swaps when fairness is similar.
+        const sizePenalty = (gives.length + gets.length - 2) * 0.01;
+        const score = fairness * 0.6 + (fitScore / 4) * 0.25 + sizeScore * 0.15 - sizePenalty;
         allTrades.push({
           partnerName: otherName,
           partnerRosterId: other.roster_id,
@@ -1862,9 +1925,14 @@ function renderRosters() {
     topTrades.push(t);
   }
 
+  if (!myHasRealWeakness) {
+    tradeCard.appendChild(el("div", { class: "card-lede" },
+      `${selectedName} has no positions below 85% of league average. ` +
+      `Showing trades that strengthen the weakest spots of the starting lineup (${[...myNeed].join(", ") || "—"}).`));
+  }
   if (!topTrades.length) {
     tradeCard.appendChild(el("div", { class: "empty" },
-      "No mutually-beneficial trades found within 12% value across 1-for-1, 2-for-1, 1-for-2, and 2-for-2 combinations."));
+      "No mutually-beneficial trades found within 12% value across 1-for-1 through 3-for-3 combinations."));
   } else {
     topTrades.forEach(t => {
       const block = el("div", { class: "trade-block" });
@@ -1903,12 +1971,15 @@ function renderRosters() {
     });
   }
   tradeCard.appendChild(el("div", { class: "pct", style: "margin-top:10px" },
-    "Algorithm: exhaustive search across all 1-for-1, 2-for-1, 1-for-2, and 2-for-2 swaps between you and every other manager, " +
-    "with future draft picks included in the movable pool. Each side's movable pool is its Tradeable + Wait & See assets (KTC value ≥ 1000). " +
+    "Algorithm: exhaustive search across all 1-for-1 through 3-for-3 swaps between you and every other manager, " +
+    "with future draft picks included in the movable pool. " +
+    "Blended value = 0.7 × Flock expert-avg + 0.3 × KTC (Flock-only or KTC-only if one source is missing). " +
     "Asset tiers use a position-aware age curve (QB cliff 33, WR 28, TE 30, RB 26 — picks classified by value alone). " +
     "A swap qualifies only when (a) every calculator with data on both sides agrees the value gap is < 12%, " +
-    "(b) the giver is not parting with a position they're already weak at, and (c) at least one weak position improves on each side. " +
-    "Top 10 by composite score (60% fairness, 25% mutual position-fit count, 15% trade size); max 2 ideas per partner."
+    "(b) the giver is not parting with a position they're already weak at, and " +
+    "(c) at least one need-set position improves on each side. " +
+    "Need set = positions below 85% of league average value; if a roster has none, the two weakest starter positions are used as the need set instead. " +
+    "Top 10 by composite score (60% fairness + 25% mutual fit count + 15% size − small penalty for larger combos); max 2 per partner."
   ));
   main.appendChild(tradeCard);
 }
