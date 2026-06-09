@@ -1859,6 +1859,42 @@ function renderRosters() {
     assets.forEach(a => { ktc += a.ktc || 0; flock += a.flock || 0; });
     return { ktc, flock };
   }
+  // Min "useful" depth a roster needs at each position after a trade. Counts
+  // QB-eligible (1 QB + 1 SF + 1 backup = 3), RB (2 + flex + backup = 4),
+  // WR (3 + flex + backup = 4), TE (1 + backup = 2). A player counts toward
+  // depth only if their KTC value is at least 1000 — three garbage QBs aren't
+  // a real backup.
+  const MIN_DEPTH_AFTER = { QB: 3, RB: 4, WR: 4, TE: 2 };
+  const BACKUP_VALUE_FLOOR = 1000;
+  function depthCounts(rosterId) {
+    const out = { QB: 0, RB: 0, WR: 0, TE: 0 };
+    const roster = latestSeason.rosters.find(r => r.roster_id === rosterId);
+    if (!roster) return out;
+    (roster.players || []).forEach(pid => {
+      const p = state.sleeper.players[pid];
+      if (!p || !(p.position in out)) return;
+      const v = ktcPlayers[ktcNormalizeName(p.name)] || 0;
+      if (v < BACKUP_VALUE_FLOOR) return;
+      out[p.position]++;
+    });
+    return out;
+  }
+  function hasAdequateBackup(rosterId, gives, gets) {
+    const depth = depthCounts(rosterId);
+    gives.forEach(a => {
+      if (a.kind === "player" && a.position in depth && (a.ktc || 0) >= BACKUP_VALUE_FLOOR) depth[a.position]--;
+    });
+    gets.forEach(a => {
+      if (a.kind === "player" && a.position in depth && (a.ktc || 0) >= BACKUP_VALUE_FLOOR) depth[a.position]++;
+    });
+    for (const a of gives) {
+      if (a.kind !== "player") continue;
+      if (!(a.position in depth)) continue;
+      if (depth[a.position] < MIN_DEPTH_AFTER[a.position]) return false;
+    }
+    return true;
+  }
+
   function bothCalcsAgree(givesSum, getsSum, tol = 0.12) {
     if (!givesSum.ktc || !getsSum.ktc) return false;
     const ktcDiff = Math.abs(givesSum.ktc - getsSum.ktc) / Math.max(givesSum.ktc, getsSum.ktc);
@@ -1948,6 +1984,9 @@ function renderRosters() {
         // Overlap impossible (different rosters), so skip the check.
         const gaveTheirWeak = gets.some(g => g.kind === "player" && isWeakAt(other.roster_id, g.position));
         if (gaveTheirWeak) return;
+        // Both sides must keep a useful backup at every position they ship out.
+        if (!hasAdequateBackup(selectedRoster.roster_id, gives, gets)) return;
+        if (!hasAdequateBackup(other.roster_id, gets, gives)) return;
         const getsSum = sumValues(gets);
         if (!bothCalcsAgree(myGivesSum, getsSum)) return;
         const myFinal = rosterImpact(selectedRoster.roster_id, gives, gets, myNeed);
@@ -2097,8 +2136,9 @@ function renderRosters() {
     "Blended value = 0.7 × Flock expert-avg + 0.3 × KTC (Flock-only or KTC-only if one source is missing). " +
     "Asset tiers use a position-aware age curve (QB cliff 33, WR 28, TE 30, RB 26 — picks classified by value alone). " +
     "A swap qualifies only when (a) every calculator with data on both sides agrees the value gap is < 12%, " +
-    "(b) the giver is not parting with a position they're already weak at, and " +
-    "(c) at least one need-set position improves on each side. " +
+    "(b) the giver is not parting with a position they're already weak at, " +
+    "(c) after the swap, the giver still has enough useful (≥ 1000 KTC) bodies at each shipped-out position to cover starters plus a backup (QB ≥ 3, RB ≥ 4, WR ≥ 4, TE ≥ 2), and " +
+    "(d) at least one need-set position improves on each side. " +
     "Need set = positions below 85% of league average value; if a roster has none, the two weakest starter positions are used as the need set instead. " +
     "Composite score: 50% fairness + 20% mutual fit count + 20% type alignment + up to 10% player↔pick mix bonus − size penalty. " +
     "Type alignment rewards trades where Contenders receive in-prime players and near-term picks while Reloaders receive young players and future picks; Middlers stay neutral. " +
