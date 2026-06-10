@@ -1825,8 +1825,7 @@ function ageBand(position, age) {
 
 function classifyAsset(blended, position, age) {
   if (blended == null) blended = 0;
-  // Picks: value only. Highest tier picks land Foundational, next Mainstay,
-  // then Upside Shot for mid picks, then Replaceable for the dregs.
+  // Picks: value only.
   if (position === "PICK") {
     let label;
     if (blended >= 5500) label = "Foundational";
@@ -1838,42 +1837,39 @@ function classifyAsset(blended, position, age) {
 
   const band = ageBand(position, age);  // "young" | "prime" | "old"
   let label;
-  // Elite tier (top of KTC superflex)
+  // Elite tier
   if (blended >= 8500) {
-    label = band === "old" ? "Productive Vet" : "Cornerstone";
+    label = band === "old" ? "Short Term League Winner" : "Cornerstone";
   }
-  // High value, established / future workhorse
-  else if (blended >= 6500) {
-    label = band === "young" ? "Foundational"
-          : band === "prime" ? "Foundational"
-          : "Productive Vet";
+  // High-end starter
+  else if (blended >= 5500) {
+    label = band === "old" ? "Short Term League Winner" : "Foundational";
   }
-  // Strong starter band
-  else if (blended >= 4500) {
+  // Solid starter
+  else if (blended >= 4000) {
     label = band === "young" ? "Upside Premier"
           : band === "prime" ? "Mainstay"
           : "Productive Vet";
   }
-  // Mid value: real fantasy bodies, varied by age
-  else if (blended >= 2500) {
-    label = band === "young" ? "Upside Premier"
-          : band === "prime" ? "Mainstay"
-          : "Short Term League Winner";
-  }
-  // Low-mid: bench / spot-starter
+  // Bench / spec piece
   else if (blended >= 1500) {
-    label = band === "young" ? "Upside Shot"
-          : band === "prime" ? "Short Term Production"
-          : "Short Term Production";
+    label = band === "old" ? "Short Term Production" : "Upside Shot";
   }
-  // Low: deep bench
+  // Deep bench
   else if (blended >= 800) {
-    label = band === "old" ? "Jag - Insurance" : "Serviceable";
+    if (band === "young") label = "Upside Shot";
+    else if (band === "old") label = "Jag - Insurance";
+    else label = "Serviceable";
   }
-  // Bottom
-  else {
+  // Bottom of the roster
+  else if (blended >= 200) {
     if (band === "young") label = "Jag - Developmental";
-    else label = "Replaceable";
+    else if (band === "old") label = "Jag - Insurance";
+    else label = "Serviceable";
+  }
+  // Truly unranked / barely on the board
+  else {
+    label = "Replaceable";
   }
   return Object.assign({ label }, DD_TIER_INFO[label]);
 }
