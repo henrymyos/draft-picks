@@ -1832,9 +1832,7 @@ function renderRosters() {
   const tradedPicks = state.sleeper.traded_picks || [];
 
   // ---------- Team selector ----------
-  const users = latestSeason.users.slice().sort((a, b) =>
-    canonicalOwnerName(userDisplay(a)).localeCompare(canonicalOwnerName(userDisplay(b)))
-  );
+  const users = sortUsersHenryFirst(latestSeason.users);
   if (state.rosterTeam == null && users.length) state.rosterTeam = users[0].user_id;
   const opts = users.map(u => ({ value: u.user_id, label: canonicalOwnerName(userDisplay(u)) }));
   const controls = el("div", { class: "controls" });
@@ -2379,9 +2377,7 @@ function fillOptimalLineup(rosterPositions, candidates) {
 }
 
 function teamPickerControls(latestSeason) {
-  const users = latestSeason.users.slice().sort((a, b) =>
-    canonicalOwnerName(userDisplay(a)).localeCompare(canonicalOwnerName(userDisplay(b)))
-  );
+  const users = sortUsersHenryFirst(latestSeason.users);
   if (state.rosterTeam == null && users.length) state.rosterTeam = users[0].user_id;
   const opts = users.map(u => ({ value: u.user_id, label: canonicalOwnerName(userDisplay(u)) }));
   const controls = el("div", { class: "controls" });
@@ -2556,31 +2552,49 @@ function renderLineup() {
   });
   main.appendChild(lineupCard);
 
-  // Bench card
+  // Bench card — grouped by position (QB / RB / WR / TE), sorted by projection within each.
   const benchCard = el("div", { class: "card" }, el("h2", {}, "Bench"));
-  if (upgrades.length) {
+  const POSITION_ORDER = ["QB", "RB", "WR", "TE"];
+  // Index upgrades by player id for quick lookup.
+  const upgradeByPid = {};
+  upgrades.forEach(({ player, upgrade }) => { upgradeByPid[player.id] = upgrade; });
+
+  let benchHasContent = false;
+  POSITION_ORDER.forEach(pos => {
+    const posBench = bench
+      .filter(p => p.position === pos)
+      .sort((a, b) => b.projected - a.projected);
+    if (!posBench.length) return;
+    benchHasContent = true;
     benchCard.appendChild(el("div", { class: "sub-header" },
-      "Upgrades available", el("span", { class: "count" }, String(upgrades.length))));
-    upgrades.forEach(({ player, upgrade }) => {
-      benchCard.appendChild(renderPlayerRow(player, {
+      pos, el("span", { class: "count" }, String(posBench.length))
+    ));
+    posBench.forEach(p => {
+      const upgrade = upgradeByPid[p.id];
+      benchCard.appendChild(renderPlayerRow(p, {
         bench: true,
-        slotLabel: upgrade.slot === "SUPER_FLEX" ? "SF" : upgrade.slot,
+        slotLabel: upgrade ? (upgrade.slot === "SUPER_FLEX" ? "SF" : upgrade.slot) : pos,
         upgrade,
       }));
     });
-  }
-  if (others.length) {
+  });
+  // Catch-all for any non-FantPos players (rare).
+  const otherBench = bench.filter(p => !POSITION_ORDER.includes(p.position))
+    .sort((a, b) => b.projected - a.projected);
+  if (otherBench.length) {
+    benchHasContent = true;
     benchCard.appendChild(el("div", { class: "sub-header" },
-      "No upgrade", el("span", { class: "count" }, String(others.length))));
-    others.forEach(p => benchCard.appendChild(renderPlayerRow(p, { bench: true, slotLabel: p.position })));
+      "Other", el("span", { class: "count" }, String(otherBench.length))
+    ));
+    otherBench.forEach(p => benchCard.appendChild(renderPlayerRow(p, { bench: true, slotLabel: p.position })));
   }
-  if (!upgrades.length && !others.length) {
+  if (!benchHasContent) {
     benchCard.appendChild(el("div", { class: "empty" }, "Bench is empty."));
   }
   main.appendChild(benchCard);
 
   main.appendChild(el("div", { class: "pct", style: "margin-top:14px" },
-    "Projections scored with your league's scoring_settings. Starters filled greedily highest-projection first into QB → RB → WR → TE → FLEX (RB/WR/TE) → SF (any). Bench upgrades show the swap that would gain the most points."
+    "Projections scored with your league's scoring_settings. Starters filled greedily highest-projection first into QB → RB → WR → TE → FLEX (RB/WR/TE) → SF (any). Bench is grouped by position (QB / RB / WR / TE) and sorted by projected points within each; upgrade chips highlight bench players who project ahead of a current starter."
   ));
 }
 
@@ -3416,10 +3430,12 @@ async function loadSleeper(force = false) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     state.sleeper = data;
-    // Default the My Team picker to Henry once Sleeper data is in.
-    if (state.workspace === "team" && state.rosterTeam == null) {
-      const henryId = findUserIdByCanonicalName("Henry");
-      if (henryId) state.rosterTeam = henryId;
+    // Default every "selected user" dropdown to Henry on first load.
+    const henryId = findUserIdByCanonicalName("Henry");
+    if (henryId) {
+      if (state.rosterTeam == null) state.rosterTeam = henryId;
+      if (state.draft.myUserId == null) state.draft.myUserId = henryId;
+      if (state.tradesUserId == null) state.tradesUserId = henryId;
     }
   } catch (e) {
     state.sleeperError = e.message;
@@ -3828,9 +3844,7 @@ function renderTrades() {
   const { seasons, players } = state.sleeper;
   // Use the current (latest) season's users as the canonical roster of managers
   const currentSeason = seasons[seasons.length - 1];
-  const allUsers = currentSeason.users.slice().sort((a, b) =>
-    canonicalOwnerName(userDisplay(a)).localeCompare(canonicalOwnerName(userDisplay(b)))
-  );
+  const allUsers = sortUsersHenryFirst(currentSeason.users);
 
   if (state.tradesUserId == null && allUsers.length) state.tradesUserId = allUsers[0].user_id;
 
@@ -4117,6 +4131,17 @@ const WORKSPACE_TABS = {
   ],
 };
 
+// Sort users alphabetically with Henry pinned to the top.
+function sortUsersHenryFirst(users) {
+  return users.slice().sort((a, b) => {
+    const aName = canonicalOwnerName(userDisplay(a));
+    const bName = canonicalOwnerName(userDisplay(b));
+    if (aName === "Henry" && bName !== "Henry") return -1;
+    if (bName === "Henry" && aName !== "Henry") return 1;
+    return aName.localeCompare(bName);
+  });
+}
+
 function findUserIdByCanonicalName(name) {
   if (!state.sleeper || !state.sleeper.seasons || !state.sleeper.seasons.length) return null;
   const latest = state.sleeper.seasons[state.sleeper.seasons.length - 1];
@@ -4194,13 +4219,15 @@ function renderDraftWorkspace() {
 
   const d = state.draft.data;
 
-  // Team picker
+  // Team picker — Henry pinned to the top, default selection on first view.
   const controls = el("div", { class: "controls" });
-  const sortedUsers = d.users.slice().sort((a, b) =>
-    canonicalOwnerName(a.team_name || a.display_name).localeCompare(
-      canonicalOwnerName(b.team_name || b.display_name)
-    )
-  );
+  const sortedUsers = d.users.slice().sort((a, b) => {
+    const aName = canonicalOwnerName(a.team_name || a.display_name);
+    const bName = canonicalOwnerName(b.team_name || b.display_name);
+    if (aName === "Henry" && bName !== "Henry") return -1;
+    if (bName === "Henry" && aName !== "Henry") return 1;
+    return aName.localeCompare(bName);
+  });
   if (state.draft.myUserId == null && sortedUsers.length) {
     state.draft.myUserId = sortedUsers[0].user_id;
   }
@@ -4700,7 +4727,12 @@ async function loadData() {
     const picks = extractPicks(data.rows);
     state.picks = picks;
     state.years = uniqueSorted(picks.map(p => p.year));
-    state.people = uniqueSorted(picks.map(p => p.person));
+    state.people = uniqueSorted(picks.map(p => p.person))
+      .sort((a, b) => {
+        if (a === "Henry" && b !== "Henry") return -1;
+        if (b === "Henry" && a !== "Henry") return 1;
+        return a.localeCompare(b);
+      });
     state.lastUpdated = new Date();
     setStatus("ok", "Updated " + state.lastUpdated.toLocaleTimeString());
     render();
