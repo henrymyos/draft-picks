@@ -1865,9 +1865,9 @@ const POSITION_AGE_CURVE = {
   QB: { rising: 26, cliff: 33 },   // QBs hold value the longest
   WR: { rising: 24, cliff: 28 },
   TE: { rising: 25, cliff: 30 },
-  // RB cliff at 28 (not 26): Dynasty Domain still rates 26-27yo RBs like
-  // James Cook and Jonathan Taylor as Foundational, not short-term assets.
-  RB: { rising: 23, cliff: 28 },
+  // RB rising 24 (Skattebo at 24 is still Upside Premier per the DD chart);
+  // cliff 28 because DD rates 26-27yo RBs (Cook, Taylor) as Foundational.
+  RB: { rising: 24, cliff: 28 },
 };
 
 // Dynasty Domain-style 12-tier categorization. Derived from KTC blended value
@@ -1893,14 +1893,50 @@ const DD_TIER_INFO = {
 };
 
 function ageBand(position, age) {
-  if (age == null) return "prime";
+  // No age on record almost always means an incoming rookie (Sleeper hasn't
+  // populated the bio yet) — treat as young, not prime.
+  if (age == null) return "young";
   const curve = POSITION_AGE_CURVE[position] || POSITION_AGE_CURVE.WR;
   if (age <= curve.rising) return "young";
   if (age >= curve.cliff) return "old";
   return "prime";
 }
 
-function classifyAsset(ktcValue, position, age) {
+// Positional projection rank (1 = best) from this week's Sleeper projections,
+// scored with the league's settings. Returns null when projections aren't
+// loaded or are all zero (off-season), so callers can fall back to age-only.
+let _projRankCache = null;
+let _projRankCacheAt = 0;
+function posProjectionRank(playerId) {
+  if (!state.lineupData || !state.sleeper) return null;
+  const now = Date.now();
+  if (!_projRankCache || now - _projRankCacheAt > 10 * 60 * 1000) {
+    const { projections, league } = state.lineupData;
+    const scoring = league.scoring_settings || {};
+    const byPos = { QB: [], RB: [], WR: [], TE: [] };
+    let anyNonZero = false;
+    Object.entries(projections || {}).forEach(([pid, proj]) => {
+      const sp = state.sleeper.players[pid];
+      if (!sp || !byPos[sp.position]) return;
+      const pts = scoreProjection(proj.stats, scoring);
+      if (pts > 0) anyNonZero = true;
+      byPos[sp.position].push({ pid, pts });
+    });
+    if (!anyNonZero) {
+      _projRankCache = {};            // off-season: no usable ranks
+    } else {
+      _projRankCache = {};
+      Object.values(byPos).forEach(arr => {
+        arr.sort((a, b) => b.pts - a.pts);
+        arr.forEach((e, i) => { if (e.pts > 0) _projRankCache[e.pid] = i + 1; });
+      });
+    }
+    _projRankCacheAt = now;
+  }
+  return _projRankCache[playerId] != null ? _projRankCache[playerId] : null;
+}
+
+function classifyAsset(ktcValue, position, age, playerId) {
   if (ktcValue == null) ktcValue = 0;
   // Picks: value only.
   if (position === "PICK") {
@@ -1922,13 +1958,21 @@ function classifyAsset(ktcValue, position, age) {
   // verified against Henry-roster ground truth (Goff / Kyler = Mainstay,
   // LaPorta 4512 = Upside Premier, Strange/Coker/Helm/Bigsby/Marks/Tucker
   // 2210-3051 = Upside Shot, Miller 1824 = Jag - Developmental).
-  const band = ageBand(position, age);  // "young" | "prime" | "old"
+  let band = ageBand(position, age);  // "young" | "prime" | "old"
+  // Projection override: a player past the age cliff who's still projected as
+  // a top-12 weekly producer at his position gets treated as in-prime, so a
+  // high-projection age-28+ RB can still be Foundational. Off-season (when
+  // projections are zeroed) this is a no-op.
+  if (band === "old" && playerId != null) {
+    const rank = posProjectionRank(playerId);
+    if (rank != null && rank <= 12) band = "prime";
+  }
   let label;
   if (ktcValue >= 6600) {
     label = band === "old" ? "Short Term League Winner" : "Cornerstone";
   } else if (ktcValue >= 5400) {
     label = band === "old" ? "Short Term League Winner" : "Foundational";
-  } else if (ktcValue >= 4000) {
+  } else if (ktcValue >= 3800) {
     label = band === "young" ? "Upside Premier"
           : band === "prime" ? "Mainstay"
           : "Productive Vet";
@@ -1950,6 +1994,7 @@ function renderRosters() {
   ensureSleeperLoaded();
   ensureKtcDynastyLoaded();
   ensureFlockLoaded();
+  ensureLineupDataLoaded();  // powers the projection override for old players
 
   if (!state.sleeper) {
     main.appendChild(el("div", { class: "empty" },
@@ -2056,7 +2101,7 @@ function renderRosters() {
       age: p.age,
       ktc, flock,
       value: blended,
-      tier: classifyAsset(ktc, p.position, p.age),
+      tier: classifyAsset(ktc, p.position, p.age, pid),
     };
   }
   function assetsForRoster(rosterId) {
