@@ -280,6 +280,10 @@
   .hist-table tr.hist-summary-top td, .hist-table tr.hist-summary-top th { border-top: 2px solid var(--border); }
   .hist-table th.metric-label { text-align: left; }
   .hist-note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  .hist-table td.h2h-w, .hist-table tr:hover td.h2h-w { background: rgba(46, 160, 67, 0.13); color: #3fb950; }
+  .hist-table td.h2h-l, .hist-table tr:hover td.h2h-l { background: rgba(248, 81, 73, 0.10); color: #f85149; }
+  .hist-table td.diag, .hist-table tr:hover td.diag { color: var(--muted); }
+  .hist-table tr.hist-total td { font-weight: 700; border-top: 2px solid var(--border); }
   .bar-row {
     display: flex;
     height: 6px;
@@ -4084,6 +4088,28 @@ function ensureSleeperLoaded() {
   if (!state.sleeper && !state.sleeperLoading && !state.sleeperError) loadSleeper();
 }
 
+// All-time record sheet (head-to-head + playoff history, predates Sleeper).
+async function loadAlltime() {
+  if (state.alltimeLoading) return;
+  state.alltimeLoading = true;
+  state.alltimeError = null;
+  try {
+    const res = await fetch("/api/alltime", { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    state.alltime = data;
+  } catch (e) {
+    state.alltimeError = e.message;
+  } finally {
+    state.alltimeLoading = false;
+    render();
+  }
+}
+function ensureAlltimeLoaded() {
+  if (!state.alltime && !state.alltimeLoading && !state.alltimeError) loadAlltime();
+}
+
 async function loadKtc(force = false) {
   if (state.ktcLoading) return;
   if (state.ktc && !force) return;
@@ -4737,11 +4763,101 @@ function computeLeagueHistory() {
   return years;
 }
 
+// Parse the "All Time Record" sheet tab. Layout: a 12x12 head-to-head matrix
+// (COLUMN = manager, ROW = opponent, so column ME read down is Henry's record
+// against everyone), then summary rows (Bye / Wins / Appearances / Final 4 /
+// Championships), then a "Playoffs" header starting a second matrix with a
+// TOTAL row. Includes pre-Sleeper seasons, so it can't be computed from the
+// Sleeper API.
+function prettyMgrName(s) {
+  const t = (s || "").trim();
+  if (!t) return "";
+  if (t.toUpperCase() === "ME") return "Henry";
+  return t[0].toUpperCase() + t.slice(1).toLowerCase();
+}
+function parseAlltimeSheet(rows) {
+  if (!rows || !rows.length) return null;
+  const header = rows[0] || [];
+  const names = [];
+  for (let c = 1; c < header.length; c++) {
+    const n = prettyMgrName(header[c]);
+    if (n && n.length <= 12 && !/\d/.test(n)) names.push({ col: c, name: n });
+    else if (names.length) break;  // stop at the first non-name header (notes)
+  }
+  if (!names.length) return null;
+  const nameSet = new Set(names.map(x => x.name));
+  const note = (header[names[names.length - 1].col + 1] || "").trim();
+  const reg = {}, po = {};
+  const summary = [];
+  let playoffTotal = null;
+  let mode = "regular";
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const label = (row[0] || "").trim();
+    if (!label) continue;
+    if (/^playoffs$/i.test(label)) { mode = "playoff"; continue; }
+    const vals = {};
+    names.forEach(({ col, name }) => {
+      const v = (row[col] || "").trim();
+      if (v) vals[name] = v;
+    });
+    const pretty = prettyMgrName(label);
+    if (nameSet.has(pretty)) (mode === "regular" ? reg : po)[pretty] = vals;
+    else if (/^total$/i.test(label)) playoffTotal = vals;
+    else summary.push({ label, values: vals });
+  }
+  return { names: names.map(x => x.name), reg, po, summary, playoffTotal, note };
+}
+
+// W-L(-T) string → tint class (green winning record, red losing record).
+function recordClass(rec) {
+  const m = (rec || "").match(/^(\d+)\s*-\s*(\d+)/);
+  if (!m) return "";
+  const w = parseInt(m[1], 10), l = parseInt(m[2], 10);
+  if (w > l) return "h2h-w";
+  if (l > w) return "h2h-l";
+  return "";
+}
+
+// Head-to-head matrix card: rows = manager, columns = opponent, so each cell
+// is the row manager's record against the column manager (the transpose of
+// the sheet's column-oriented layout).
+function buildH2HCard(title, names, matrix, totalRow, note) {
+  const card = el("div", { class: "card" }, el("h2", {}, title));
+  const table = el("table", { class: "hist-table" });
+  table.appendChild(el("thead", {}, el("tr", {},
+    el("th", {}, "vs"),
+    ...names.map(n => el("th", {}, n)),
+  )));
+  const body = el("tbody");
+  names.forEach(mgr => {
+    body.appendChild(el("tr", {},
+      el("td", {}, mgr),
+      ...names.map(opp => {
+        if (opp === mgr) return el("td", { class: "diag" }, "—");
+        const rec = (matrix[opp] || {})[mgr] || "";  // sheet: row=opponent, col=manager
+        return el("td", { class: recordClass(rec) }, rec || "—");
+      }),
+    ));
+  });
+  if (totalRow) {
+    body.appendChild(el("tr", { class: "hist-total" },
+      el("td", {}, "Total"),
+      ...names.map(n => el("td", { class: recordClass(totalRow[n]) }, totalRow[n] || "—")),
+    ));
+  }
+  table.appendChild(body);
+  card.appendChild(table);
+  if (note) card.appendChild(el("div", { class: "hist-note" }, note));
+  return card;
+}
+
 function renderHistory() {
   const main = document.getElementById("main");
   main.innerHTML = "";
   ensureSleeperLoaded();
   ensureKtcDynastyLoaded();
+  ensureAlltimeLoaded();
 
   if (state.sleeperLoading) {
     main.appendChild(el("div", { class: "empty" }, "Loading from Sleeper…"));
@@ -4887,6 +5003,51 @@ function renderHistory() {
   recCard.appendChild(el("div", { class: "hist-note" },
     "Champion highlighted gold, runner-up blue."));
   main.appendChild(recCard);
+
+  // ----- All-time record sheet (includes pre-Sleeper seasons) -----
+  if (state.alltimeLoading) {
+    main.appendChild(el("div", { class: "empty" }, "Loading all-time records…"));
+    return;
+  }
+  if (state.alltimeError) {
+    main.appendChild(el("div", { class: "empty" }, "All-time sheet error: " + state.alltimeError));
+    return;
+  }
+  const at = state.alltime ? parseAlltimeSheet(state.alltime.rows) : null;
+  if (!at) return;
+
+  // Card 3: all-time head-to-head.
+  main.appendChild(buildH2HCard(
+    "All-Time Head-to-Head", at.names, at.reg, null,
+    "Row manager's record against each column manager, all seasons" +
+    (at.note ? " — " + at.note.toLowerCase() : "") + "."));
+
+  // Card 4: playoff summary rows (byes, title-game results, championships).
+  if (at.summary.length) {
+    const sumCard = el("div", { class: "card" }, el("h2", {}, "Playoff Summary"));
+    const sumTable = el("table", { class: "hist-table" });
+    sumTable.appendChild(el("thead", {}, el("tr", {},
+      el("th", {}, ""),
+      ...at.names.map(n => el("th", {}, n)),
+    )));
+    const sumBody = el("tbody");
+    at.summary.forEach(rowDef => {
+      sumBody.appendChild(el("tr", {},
+        el("td", {}, rowDef.label),
+        ...at.names.map(n => el("td", {}, rowDef.values[n] || "—")),
+      ));
+    });
+    sumTable.appendChild(sumBody);
+    sumCard.appendChild(sumTable);
+    main.appendChild(sumCard);
+  }
+
+  // Card 5: playoff-only head-to-head with the TOTAL row.
+  if (Object.keys(at.po).length) {
+    main.appendChild(buildH2HCard(
+      "Playoff Head-to-Head", at.names, at.po, at.playoffTotal,
+      "Playoff games only — row manager's record against each column manager."));
+  }
 }
 
 // ---------- Live Draft workspace ----------
