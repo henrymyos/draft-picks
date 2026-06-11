@@ -1920,19 +1920,13 @@ function classifyAsset(blended, position, age) {
   else if (blended >= 1500) {
     label = band === "old" ? "Short Term Production" : "Upside Shot";
   }
-  // Deep bench
-  else if (blended >= 800) {
-    if (band === "young") label = "Upside Shot";
-    else if (band === "old") label = "Jag - Insurance";
-    else label = "Serviceable";
-  }
-  // Bottom of the roster
-  else if (blended >= 200) {
+  // Narrow borderline band: still worth a roster spot, barely.
+  else if (blended >= 1300) {
     if (band === "young") label = "Jag - Developmental";
     else if (band === "old") label = "Jag - Insurance";
     else label = "Serviceable";
   }
-  // Truly unranked / barely on the board
+  // Anything below ~1300 KTC reads as cuttable — drop for any waiver claim.
   else {
     label = "Replaceable";
   }
