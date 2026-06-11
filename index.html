@@ -4587,12 +4587,34 @@ const WORKSPACE_TABS = {
 };
 
 // Sort users alphabetically with Henry pinned to the top.
+// Henry first, then everyone else by total roster value (players + picks,
+// KTC) descending. Falls back to alphabetical until KTC / Sleeper data has
+// loaded — the views re-render when it arrives and the order corrects itself.
 function sortUsersHenryFirst(users) {
+  ensureSleeperLoaded();
+  ensureKtcDynastyLoaded();
+  let valueByUserId = null;
+  if (state.sleeper && state.sleeper.seasons.length && state.ktcDynasty) {
+    const ranked = computeManagerRankings();
+    if (ranked) {
+      const latest = state.sleeper.seasons[state.sleeper.seasons.length - 1];
+      valueByUserId = {};
+      ranked.forEach(r => {
+        const roster = latest.rosters.find(x => x.roster_id === r.roster_id);
+        if (roster) valueByUserId[roster.owner_id] = r.totalValue;
+      });
+    }
+  }
   return users.slice().sort((a, b) => {
     const aName = canonicalOwnerName(userDisplay(a));
     const bName = canonicalOwnerName(userDisplay(b));
     if (aName === "Henry" && bName !== "Henry") return -1;
     if (bName === "Henry" && aName !== "Henry") return 1;
+    if (valueByUserId) {
+      const av = valueByUserId[a.user_id] != null ? valueByUserId[a.user_id] : -1;
+      const bv = valueByUserId[b.user_id] != null ? valueByUserId[b.user_id] : -1;
+      if (av !== bv) return bv - av;
+    }
     return aName.localeCompare(bName);
   });
 }
@@ -4674,15 +4696,9 @@ function renderDraftWorkspace() {
 
   const d = state.draft.data;
 
-  // Team picker — Henry pinned to the top, default selection on first view.
+  // Team picker — Henry pinned to the top, rest by roster value.
   const controls = el("div", { class: "controls" });
-  const sortedUsers = d.users.slice().sort((a, b) => {
-    const aName = canonicalOwnerName(a.team_name || a.display_name);
-    const bName = canonicalOwnerName(b.team_name || b.display_name);
-    if (aName === "Henry" && bName !== "Henry") return -1;
-    if (bName === "Henry" && aName !== "Henry") return 1;
-    return aName.localeCompare(bName);
-  });
+  const sortedUsers = sortUsersHenryFirst(d.users);
   if (state.draft.myUserId == null && sortedUsers.length) {
     state.draft.myUserId = sortedUsers[0].user_id;
   }
