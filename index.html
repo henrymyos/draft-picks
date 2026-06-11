@@ -1960,25 +1960,33 @@ function classifyAsset(ktcValue, position, age, playerId) {
   // LaPorta 4512 = Upside Premier, Strange/Coker/Helm/Bigsby/Marks/Tucker
   // 2210-3051 = Upside Shot, Miller 1824 = Jag - Developmental).
   let band = ageBand(position, age);  // "young" | "prime" | "old"
-  // Projection override: a player past the age cliff who's still projected as
-  // a top-12 weekly producer at his position gets treated as in-prime, so a
-  // high-projection age-28+ RB can still be Foundational. Off-season (when
-  // projections are zeroed) this is a no-op.
-  if (band === "old" && playerId != null) {
+  // Projection override: only in the Foundational+ value range. A player past
+  // the age cliff who's still projected top-12 at his position is treated as
+  // in-prime there (high-projection old RB can be Foundational). Below 5400
+  // the user's calls say old stars are Short Term League Winners regardless
+  // of projection (CMC, Henry), so the override doesn't apply.
+  if (band === "old" && ktcValue >= 5400 && playerId != null) {
     const rank = posProjectionRank(playerId);
     if (rank != null && rank <= 12) band = "prime";
   }
+  // "Aging" = late-prime — past the position's growth years but before the
+  // cliff. These players still produce but their dynasty value only declines:
+  // Baker/Goff/Darnold/Kyler (QB 28-31) are Productive Vets; Willis/Jones/
+  // Swift (lower value) are Short Term Production.
+  const AGING_AGE = { QB: 27, RB: 27, WR: 27, TE: 29 };
+  const aging = band === "prime" && age != null && age >= (AGING_AGE[position] || 27);
   let label;
   if (ktcValue >= 6600) {
     label = band === "old" ? "Short Term League Winner" : "Cornerstone";
   } else if (ktcValue >= 5400) {
     label = band === "old" ? "Short Term League Winner" : "Foundational";
   } else if (ktcValue >= 3800) {
-    label = band === "young" ? "Upside Premier"
-          : band === "prime" ? "Mainstay"
-          : "Productive Vet";
+    if (band === "old") label = "Short Term League Winner";
+    else if (aging) label = ktcValue >= 4000 ? "Productive Vet" : "Short Term Production";
+    else if (band === "young") label = "Upside Premier";
+    else label = "Mainstay";
   } else if (ktcValue >= 2000) {
-    label = band === "old" ? "Short Term Production" : "Upside Shot";
+    label = (band === "old" || aging) ? "Short Term Production" : "Upside Shot";
   } else if (ktcValue >= 1300) {
     if (band === "young") label = "Jag - Developmental";
     else if (band === "old") label = "Jag - Insurance";
