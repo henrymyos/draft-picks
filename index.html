@@ -5203,7 +5203,7 @@ function renderDraftWorkspace() {
       col.appendChild(el("div", { class: "roster-pos-head" },
         el("span", { class: "pos-chip " + positionClass(pos) }, pos),
         el("span", { class: "pct" },
-          (leagueGroupRank[pos] != null ? "#" + leagueGroupRank[pos] + " · " : "") + items.length),
+          leagueGroupRank[pos] != null ? "#" + leagueGroupRank[pos] : ""),
       ));
       items.forEach(({ pl, value, posRank }) => {
         // Split into first / last so the tile stays narrow: first word is the
