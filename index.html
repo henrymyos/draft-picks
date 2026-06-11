@@ -2121,13 +2121,17 @@ function classifyAsset(ktcValue, position, age, playerId) {
     const rank = posProjectionRank(playerId);
     if (rank != null && rank <= 12) band = "prime";
   }
+  // Sleeper bio (rostered players only): NFL experience + depth chart slot.
+  const spInfo = (playerId != null && state.sleeper && state.sleeper.players)
+    ? state.sleeper.players[playerId] : null;
+  const yearsExp = spInfo && typeof spInfo.years_exp === "number" ? spInfo.years_exp : null;
+
   // Established young vet: 3+ NFL seasons at starter-level value means the
   // book is mostly written — Stroud / LaPorta / Addison / Kraft read Mainstay,
   // while 1-2 year players (Ward, Odunze, Harrison) keep Upside Premier.
   // Gated to >= 3800 so 3rd-year bench stashes (Kendre Miller) stay young.
-  if (band === "young" && ktcValue >= 3800 && playerId != null && state.sleeper && state.sleeper.players) {
-    const sp = state.sleeper.players[playerId];
-    if (sp && typeof sp.years_exp === "number" && sp.years_exp >= 3) band = "prime";
+  if (band === "young" && ktcValue >= 3800 && yearsExp != null && yearsExp >= 3) {
+    band = "prime";
   }
   // "Aging" = late-prime — past the position's growth years but before the
   // cliff. Aging QBs (Baker/Goff/Darnold/Kyler, 28+) are Productive Vets;
@@ -2140,13 +2144,17 @@ function classifyAsset(ktcValue, position, age, playerId) {
     // Old players split on a second, deeper age line. "Ancient" stars
     // (CMC 30, Henry 32, Adams 33, Evans 32) are Short Term League Winners —
     // they can carry a contender right now but have no future. Old-but-not-
-    // ancient producers (Saquon 29, Jacobs 28, DJ Moore 29, Pittman 28,
-    // Metcalf 28, Kittle 32) are Productive Vets — except high-value old WRs
-    // (AJ Brown), who still read Mainstay.
+    // ancient producers (Saquon, Jacobs, DJ Moore, Pittman, Metcalf, Kittle)
+    // are Productive Vets — except high-value old WRs (AJ Brown → Mainstay)
+    // and low-value old RBs (Rico Dowdle → Serviceable).
     const ANCIENT_AGE = { QB: 36, RB: 30, WR: 32, TE: 33 };
     const ancient = age != null && age >= (ANCIENT_AGE[position] || 33);
     if (!ancient && position === "WR" && ktcValue >= 4500) label = "Mainstay";
-    else if (ktcValue >= 3000) label = ancient ? "Short Term League Winner" : "Productive Vet";
+    else if (ktcValue >= 3000) {
+      if (ancient) label = "Short Term League Winner";
+      else if (position === "RB" && ktcValue < 3500) label = "Serviceable";
+      else label = "Productive Vet";
+    }
     else if (ktcValue >= 2000) label = "Short Term Production";
     else if (ktcValue >= 1300) label = "Jag - Insurance";
     else label = "Replaceable";
@@ -2155,11 +2163,23 @@ function classifyAsset(ktcValue, position, age, playerId) {
   } else if (ktcValue >= 5600) {
     label = "Foundational";
   } else if (ktcValue >= 3800) {
-    if (aging) label = ktcValue >= 4000 ? (position === "QB" ? "Productive Vet" : "Mainstay") : "Short Term Production";
-    else if (band === "young") label = "Upside Premier";
-    else label = "Mainstay";
+    if (aging) {
+      label = ktcValue >= 4000 ? (position === "QB" ? "Productive Vet" : "Mainstay") : "Short Term Production";
+    } else if (band === "young") {
+      // Old prospects (26+ QB with <= 1 season, e.g. Tyler Shough) are bets,
+      // not premiers; young RBs need a higher bar (Tuten 4004 vs Skattebo 4739).
+      if (position === "QB" && age != null && age >= 26 && yearsExp != null && yearsExp <= 1) label = "Upside Shot";
+      else if (position === "RB" && ktcValue < 4500) label = "Upside Shot";
+      else label = "Upside Premier";
+    } else {
+      // Prime QBs below 4600 (Bryce Young) are still question marks.
+      label = (position === "QB" && ktcValue < 4600) ? "Upside Shot" : "Mainstay";
+    }
   } else if (ktcValue >= 2000) {
-    label = aging ? "Short Term Production" : "Upside Shot";
+    // 4+ seasons with no breakout = known commodity, not an upside bet
+    // (Jake Ferguson, Romeo Doubs → Serviceable).
+    label = aging ? "Short Term Production"
+          : (yearsExp != null && yearsExp >= 4 ? "Serviceable" : "Upside Shot");
   } else if (ktcValue >= 1300) {
     label = band === "young" ? "Jag - Developmental" : "Serviceable";
   } else {
@@ -2168,19 +2188,14 @@ function classifyAsset(ktcValue, position, age, playerId) {
 
   // Depth-chart override for QBs: a backup (depth_chart_order >= 2) isn't a
   // weekly producer no matter his age or value — Justin Fields / Mac Jones
-  // types read Upside Shot, not Short Term Production / Productive Vet.
-  // Production-flavored tiers demote to Upside Shot; elite-value backups
-  // (rare) demote to Upside Premier since their value implies a future job.
-  if (position === "QB" && playerId != null && state.sleeper && state.sleeper.players) {
-    const sp = state.sleeper.players[playerId];
-    if (sp && typeof sp.depth_chart_order === "number" && sp.depth_chart_order >= 2) {
-      const PRODUCTION_TIERS = new Set([
-        "Mainstay", "Productive Vet", "Short Term Production", "Short Term League Winner",
-      ]);
-      const ELITE_TIERS = new Set(["Cornerstone", "Foundational"]);
-      if (PRODUCTION_TIERS.has(label)) label = "Upside Shot";
-      else if (ELITE_TIERS.has(label)) label = "Upside Premier";
-    }
+  // types read Upside Shot, not production tiers or Serviceable.
+  if (position === "QB" && spInfo && typeof spInfo.depth_chart_order === "number" && spInfo.depth_chart_order >= 2) {
+    const PRODUCTION_TIERS = new Set([
+      "Mainstay", "Productive Vet", "Short Term Production", "Short Term League Winner", "Serviceable",
+    ]);
+    const ELITE_TIERS = new Set(["Cornerstone", "Foundational"]);
+    if (PRODUCTION_TIERS.has(label)) label = "Upside Shot";
+    else if (ELITE_TIERS.has(label)) label = "Upside Premier";
   }
   return Object.assign({ label }, DD_TIER_INFO[label]);
 }
