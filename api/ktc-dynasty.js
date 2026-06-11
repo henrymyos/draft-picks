@@ -87,6 +87,8 @@ export default async function handler(req, res) {
         value: val,
         rank: sf.rank,
         positionRank: sf.positionalRank,
+        age: typeof p.age === "number" ? Math.floor(p.age) : null,
+        rookie: !!p.rookie,
       };
     }
     cache = { players: byName, picks, updated: Date.now() };

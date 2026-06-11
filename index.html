@@ -1121,6 +1121,7 @@ let state = {
   lineupDataLoading: false,
   lineupDataError: null,
   waiversFilter: "ALL",        // "ALL" | "QB" | "RB" | "WR" | "TE"
+  allPlayersFilter: "ALL",     // position filter on the All Players tab
   leaderboardRound: null,
   statsRound: null,
   statsInsightDrafter: null,
@@ -3071,6 +3072,97 @@ function renderWaivers() {
   ));
 }
 
+function renderAllPlayers() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  ensureKtcDynastyLoaded();
+  ensureSleeperLoaded();      // for the rostered-by column
+  ensureLineupDataLoaded();   // powers the projection override for old players
+
+  if (!state.ktcDynasty) {
+    main.appendChild(el("div", { class: "empty" },
+      state.ktcDynastyError ? "KTC error: " + state.ktcDynastyError : "Loading current KTC values…"));
+    return;
+  }
+
+  // Owner lookup: normalized player name → manager canonical name.
+  const ownerByNorm = {};
+  if (state.sleeper && state.sleeper.seasons.length) {
+    const latest = state.sleeper.seasons[state.sleeper.seasons.length - 1];
+    latest.rosters.forEach(r => {
+      const user = latest.users.find(u => u.user_id === r.owner_id);
+      const owner = user ? canonicalOwnerName(userDisplay(user)) : "—";
+      (r.players || []).forEach(pid => {
+        const p = state.sleeper.players[pid];
+        if (p) ownerByNorm[ktcNormalizeName(p.name)] = { owner, pid };
+      });
+    });
+  }
+
+  const all = Object.entries(state.ktcDynasty.players || {})
+    .map(([norm, p]) => {
+      const rostered = ownerByNorm[norm];
+      return {
+        norm,
+        name: p.name,
+        position: p.position,
+        team: p.team,
+        value: p.value || 0,
+        age: p.age,
+        owner: rostered ? rostered.owner : null,
+        tier: classifyAsset(p.value || 0, p.position, p.age, rostered ? rostered.pid : null),
+      };
+    })
+    .sort((a, b) => b.value - a.value);
+
+  const filter = state.allPlayersFilter || "ALL";
+  const filtered = filter === "ALL" ? all : all.filter(p => p.position === filter);
+
+  // Header card with filter pills
+  const headerCard = el("div", { class: "card" });
+  headerCard.appendChild(el("h2", {}, "All Players — KTC Superflex"));
+  headerCard.appendChild(el("div", { class: "pct", style: "margin-bottom:10px" },
+    `${filtered.length} players, ordered by current KTC dynasty value. Tier assigned from value × age band` +
+    ` (top-12 weekly projection rescues players past the age cliff). Rostered players show their manager.`));
+  const filterRow = el("div", { class: "action-row" });
+  const posFilter = el("div", { class: "pos-filter" });
+  ["ALL", "QB", "RB", "WR", "TE"].forEach(p => {
+    const btn = el("button", { class: filter === p ? "active" : "" }, p === "ALL" ? "All" : p);
+    btn.addEventListener("click", () => {
+      state.allPlayersFilter = p;
+      render();
+    });
+    posFilter.appendChild(btn);
+  });
+  filterRow.appendChild(posFilter);
+  headerCard.appendChild(filterRow);
+  main.appendChild(headerCard);
+
+  // Player list
+  const listCard = el("div", { class: "card" });
+  filtered.forEach((p, idx) => {
+    const nameLine = el("div", { class: "name-line" },
+      el("span", { class: "pct", style: "min-width: 30px; font-variant-numeric: tabular-nums" }, String(idx + 1)),
+      el("span", { class: "player-name" }, p.name),
+      el("span", { class: "pos-chip " + positionClass(p.position) }, p.position),
+    );
+    if (p.team) nameLine.appendChild(el("span", { class: "pct" }, p.team));
+    if (p.age != null) nameLine.appendChild(el("span", { class: "pct" }, "age " + p.age));
+    nameLine.appendChild(el("span", { class: "auto-grade-chip " + p.tier.chip }, p.tier.label));
+    const metaBits = [];
+    if (p.owner) metaBits.push(p.owner);
+    metaBits.push(p.value.toLocaleString());
+    listCard.appendChild(el("div", { class: "roster-row" },
+      nameLine,
+      el("div", { class: "meta" }, metaBits.join("  ·  ")),
+    ));
+  });
+  if (!filtered.length) {
+    listCard.appendChild(el("div", { class: "empty" }, "No players match this filter."));
+  }
+  main.appendChild(listCard);
+}
+
 function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
@@ -4376,6 +4468,7 @@ const WORKSPACE_TABS = {
     { view: "teams", label: "Teams" },
     { view: "lineup", label: "Lineup" },
     { view: "waivers", label: "Waivers" },
+    { view: "allPlayers", label: "All Players" },
   ],
 };
 
@@ -4948,6 +5041,7 @@ function render() {
     case "teams": renderTeams(); break;
     case "lineup": renderLineup(); break;
     case "waivers": renderWaivers(); break;
+    case "allPlayers": renderAllPlayers(); break;
     // Drilldowns reachable from Drafters / Teams
     case "rankings": renderRankings(); break;
     case "rosters": renderRosters(); break;
