@@ -2041,8 +2041,15 @@ const TIER_LEGEND_DESC = {
 };
 
 function buildTierLegendCard() {
-  const legendCard = el("div", { class: "card" }, el("h2", {}, "Player Categories"));
-  legendCard.appendChild(el("div", { class: "pct", style: "margin-bottom:10px" },
+  // Collapsed by default: a slim card whose summary row expands into the full
+  // star chart + glossary.
+  const legendCard = el("div", { class: "card" });
+  const outer = el("details", {});
+  outer.appendChild(el("summary", {
+    style: "cursor:pointer; font-size: 15px; font-weight: 600; color: var(--text); user-select: none;",
+  }, "Player Category Information"));
+  const body = el("div", { style: "margin-top: 12px" });
+  body.appendChild(el("div", { class: "pct", style: "margin-bottom:10px" },
     "Categories assigned daily from each player's KTC superflex dynasty value crossed with his age band on the position curve " +
     "(backup QBs demote to upside tiers; picks classified by value alone). " +
     "Star ratings follow the Dynasty Domain chart: Production Upside = how much they score now; Value Increase Upside = how much their trade value can still grow."
@@ -2069,13 +2076,10 @@ function buildTierLegendCard() {
     ));
   });
   chartTable.appendChild(chartBody);
-  legendCard.appendChild(chartTable);
+  body.appendChild(chartTable);
 
-  const legendDetails = el("details", { style: "margin-top: 14px" });
-  legendDetails.appendChild(el("summary", {
-    style: "cursor:pointer; font-size: 13px; font-weight: 600; color: var(--accent); user-select: none;",
-  }, "What each category means"));
-  const legendGrid = el("div", { class: "tier-legend", style: "margin-top: 10px" });
+  // Descriptions under the chart (always visible once expanded).
+  const legendGrid = el("div", { class: "tier-legend", style: "margin-top: 14px" });
   TIER_LEGEND_ORDER.forEach(label => {
     const info = DD_TIER_INFO[label] || { chip: "" };
     const card = el("div", { class: "tier-card" });
@@ -2084,8 +2088,10 @@ function buildTierLegendCard() {
     card.appendChild(el("div", { class: "tier-desc" }, TIER_LEGEND_DESC[label] || ""));
     legendGrid.appendChild(card);
   });
-  legendDetails.appendChild(legendGrid);
-  legendCard.appendChild(legendDetails);
+  body.appendChild(legendGrid);
+
+  outer.appendChild(body);
+  legendCard.appendChild(outer);
   return legendCard;
 }
 
@@ -2277,6 +2283,8 @@ function renderRosters() {
 
   const myAssets = assetsForRoster(selectedRoster.roster_id);
 
+  main.appendChild(buildTierLegendCard());
+
   // ===== Roster card =====
   const rosterCard = el("div", { class: "card" }, el("h2", {}, selectedName + " — Roster"));
   const TIER_ORDER = [
@@ -2318,8 +2326,6 @@ function renderRosters() {
     });
   });
   main.appendChild(rosterCard);
-
-  main.appendChild(buildTierLegendCard());
 
   // ===== Multi-asset Trade Explorer =====
   const tradeCard = el("div", { class: "card" }, el("h2", {}, "Suggested Trades"));
@@ -3177,6 +3183,7 @@ function renderAllPlayers() {
   filterRow.appendChild(posFilter);
   headerCard.appendChild(filterRow);
   main.appendChild(headerCard);
+  main.appendChild(buildTierLegendCard());
 
   // Player list
   const listCard = el("div", { class: "card" });
@@ -3201,7 +3208,6 @@ function renderAllPlayers() {
     listCard.appendChild(el("div", { class: "empty" }, "No players match this filter."));
   }
   main.appendChild(listCard);
-  main.appendChild(buildTierLegendCard());
 }
 
 function renderStats() {
