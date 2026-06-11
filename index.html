@@ -499,6 +499,15 @@
     .roster-row .meta { font-size: 11px; }
   }
   /* Tier legend */
+  .star-row {
+    color: #f2cd55;
+    letter-spacing: 2px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  @media (max-width: 640px) {
+    .star-row { letter-spacing: 0; font-size: 11px; }
+  }
   .tier-legend {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -882,18 +891,21 @@
   /* Dynasty Domain 12-tier color ladder. Elite tiers cool greens, mid blues,
      low yellows, bottom reds/grays. Each chip carries its own background so
      they're visually distinct at a glance. */
-  .dd-cornerstone        { background: rgba(46,160,67,0.40);  color: #74e08c; }
-  .dd-foundational       { background: rgba(46,160,67,0.22);  color: #74e08c; }
-  .dd-upside-premier     { background: rgba(88,166,255,0.22); color: #79b8ff; }
-  .dd-mainstay           { background: rgba(88,166,255,0.14); color: #79b8ff; }
-  .dd-productive-vet     { background: rgba(165,142,238,0.20); color: #b39ef0; }
-  .dd-short-lw           { background: rgba(165,142,238,0.12); color: #b39ef0; }
-  .dd-upside-shot        { background: rgba(210,153,34,0.22); color: var(--meh); }
-  .dd-short-prod         { background: rgba(210,153,34,0.14); color: var(--meh); }
-  .dd-serviceable        { background: rgba(110,118,129,0.20); color: var(--muted); }
-  .dd-jag-insurance      { background: rgba(248,81,73,0.15);  color: #f08585; }
-  .dd-jag-developmental  { background: rgba(248,81,73,0.10);  color: #f08585; }
-  .dd-replaceable        { background: rgba(110,118,129,0.14); color: var(--muted); }
+  /* Colors follow the Dynasty Domain chart: purple → indigo → blue →
+     light blue → dark green → green → gold → orange → red. Jag tiers and
+     Replaceable (not on the chart) stay muted. */
+  .dd-cornerstone        { background: rgba(186,68,247,0.25);  color: #d49bff; }
+  .dd-foundational       { background: rgba(67,56,202,0.35);   color: #a5b4fc; }
+  .dd-upside-premier     { background: rgba(37,99,235,0.30);   color: #7fb1ff; }
+  .dd-mainstay           { background: rgba(56,189,248,0.22);  color: #7dd6fb; }
+  .dd-productive-vet     { background: rgba(21,128,61,0.32);   color: #6fcf8f; }
+  .dd-short-lw           { background: rgba(34,197,94,0.22);   color: #74e08c; }
+  .dd-upside-shot        { background: rgba(234,179,8,0.22);   color: #f2cd55; }
+  .dd-short-prod         { background: rgba(249,115,22,0.22);  color: #fda866; }
+  .dd-serviceable        { background: rgba(220,38,38,0.20);   color: #f08585; }
+  .dd-jag-insurance      { background: rgba(110,118,129,0.20); color: var(--muted); }
+  .dd-jag-developmental  { background: rgba(110,118,129,0.16); color: var(--muted); }
+  .dd-replaceable        { background: rgba(110,118,129,0.12); color: var(--muted); }
   .auto-hit { background: rgba(46,160,67,0.15); color: var(--hit); }
   .auto-meh { background: rgba(210,153,34,0.15); color: var(--meh); }
   .auto-miss { background: rgba(248,81,73,0.15); color: var(--miss); }
@@ -1860,19 +1872,22 @@ const POSITION_AGE_CURVE = {
 // crossed with the player's age band (young / prime / old) on the position
 // curve. Computed live every render so values update as the KTC scrape
 // refreshes (~hourly). Picks classified by value alone.
+// prod / value = Production Upside and Value Increase Upside star ratings
+// (0–5) from the Dynasty Domain category chart. Jag tiers and Replaceable
+// aren't on the official chart; their stars are our own estimates.
 const DD_TIER_INFO = {
-  "Cornerstone":              { chip: "dd-cornerstone",     short: "Cstn" },
-  "Foundational":             { chip: "dd-foundational",    short: "Fdn" },
-  "Upside Premier":           { chip: "dd-upside-premier",  short: "Up+ Prem" },
-  "Mainstay":                 { chip: "dd-mainstay",        short: "Mnsty" },
-  "Productive Vet":           { chip: "dd-productive-vet",  short: "Prod Vet" },
-  "Short Term League Winner": { chip: "dd-short-lw",        short: "ST LW" },
-  "Upside Shot":              { chip: "dd-upside-shot",     short: "Up Shot" },
-  "Short Term Production":    { chip: "dd-short-prod",      short: "ST Prod" },
-  "Serviceable":              { chip: "dd-serviceable",     short: "Servic" },
-  "Jag - Insurance":          { chip: "dd-jag-insurance",   short: "Jag-Ins" },
-  "Jag - Developmental":      { chip: "dd-jag-developmental", short: "Jag-Dev" },
-  "Replaceable":              { chip: "dd-replaceable",     short: "Repl" },
+  "Cornerstone":              { chip: "dd-cornerstone",     short: "Cstn",     prod: 5, value: 1 },
+  "Foundational":             { chip: "dd-foundational",    short: "Fdn",      prod: 4, value: 3 },
+  "Upside Premier":           { chip: "dd-upside-premier",  short: "Up+ Prem", prod: 3, value: 5 },
+  "Mainstay":                 { chip: "dd-mainstay",        short: "Mnsty",    prod: 4, value: 1 },
+  "Productive Vet":           { chip: "dd-productive-vet",  short: "Prod Vet", prod: 4, value: 1 },
+  "Short Term League Winner": { chip: "dd-short-lw",        short: "ST LW",    prod: 5, value: 0 },
+  "Upside Shot":              { chip: "dd-upside-shot",     short: "Up Shot",  prod: 2, value: 4 },
+  "Short Term Production":    { chip: "dd-short-prod",      short: "ST Prod",  prod: 4, value: 0 },
+  "Serviceable":              { chip: "dd-serviceable",     short: "Servic",   prod: 2, value: 2 },
+  "Jag - Insurance":          { chip: "dd-jag-insurance",   short: "Jag-Ins",  prod: 1, value: 0 },
+  "Jag - Developmental":      { chip: "dd-jag-developmental", short: "Jag-Dev", prod: 1, value: 2 },
+  "Replaceable":              { chip: "dd-replaceable",     short: "Repl",     prod: 0, value: 0 },
 };
 
 function ageBand(position, age) {
@@ -2167,11 +2182,41 @@ function renderRosters() {
     ["Jag - Developmental",       "Young deep-bench dart throw. Probably never amounts to anything, but cheap to stash while you watch."],
     ["Replaceable",               "No value, no path, no upside. Cut for any waiver claim that comes along."],
   ];
-  const legendCard = el("div", { class: "card" }, el("h2", {}, "Tier Glossary"));
-  legendCard.appendChild(el("div", { class: "pct", style: "margin-bottom:8px" },
-    "Categories assigned daily from each player's KTC superflex dynasty value crossed with his age band on the position curve. Picks classified by value alone."
+  const legendCard = el("div", { class: "card" }, el("h2", {}, "Player Categories"));
+  legendCard.appendChild(el("div", { class: "pct", style: "margin-bottom:10px" },
+    "Categories assigned daily from each player's KTC superflex dynasty value crossed with his age band on the position curve. Picks classified by value alone. " +
+    "Star ratings follow the Dynasty Domain chart: Production Upside = how much they score now; Value Increase Upside = how much their trade value can still grow."
   ));
-  const legendGrid = el("div", { class: "tier-legend" });
+  function stars(n) {
+    if (!n) return el("span", { class: "pct" }, "—");
+    return el("span", { class: "star-row" }, "★".repeat(n));
+  }
+  const chartTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Player Category"),
+      el("th", {}, "Production Upside"),
+      el("th", {}, "Value Increase Upside"),
+    )),
+  );
+  const chartBody = el("tbody", {});
+  TIER_ORDER.forEach(label => {
+    const info = DD_TIER_INFO[label];
+    if (!info) return;
+    chartBody.appendChild(el("tr", {},
+      el("td", {}, el("span", { class: "auto-grade-chip " + info.chip }, label)),
+      el("td", {}, stars(info.prod)),
+      el("td", {}, stars(info.value)),
+    ));
+  });
+  chartTable.appendChild(chartBody);
+  legendCard.appendChild(chartTable);
+
+  // Expandable descriptions below the chart.
+  const legendDetails = el("details", { style: "margin-top: 14px" });
+  legendDetails.appendChild(el("summary", {
+    style: "cursor:pointer; font-size: 13px; font-weight: 600; color: var(--accent); user-select: none;",
+  }, "What each category means"));
+  const legendGrid = el("div", { class: "tier-legend", style: "margin-top: 10px" });
   TIER_LEGEND.forEach(([label, desc]) => {
     const info = DD_TIER_INFO[label] || { chip: "" };
     const card = el("div", { class: "tier-card" });
@@ -2181,7 +2226,8 @@ function renderRosters() {
     card.appendChild(el("div", { class: "tier-desc" }, desc));
     legendGrid.appendChild(card);
   });
-  legendCard.appendChild(legendGrid);
+  legendDetails.appendChild(legendGrid);
+  legendCard.appendChild(legendDetails);
   main.appendChild(legendCard);
 
   // ===== Multi-asset Trade Explorer =====
