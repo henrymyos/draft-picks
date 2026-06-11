@@ -462,6 +462,66 @@
   .pick-history-row.is-mine { background: rgba(88,166,255,0.10); }
   .pick-history-slot { color: var(--muted); font-variant-numeric: tabular-nums; }
   .pick-history-by { color: var(--muted); font-size: 12px; text-align: right; }
+  /* Roster-detail variant — much tighter left indent than the pick history. */
+  .roster-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .roster-row .name-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+  }
+  .roster-row .name-line .player-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .roster-row .meta {
+    color: var(--muted);
+    font-size: 12px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (max-width: 640px) {
+    .roster-row {
+      padding: 5px 4px;
+      gap: 6px;
+      font-size: 12.5px;
+    }
+    .roster-row .meta { font-size: 11px; }
+  }
+  /* Tier legend */
+  .tier-legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+  }
+  .tier-legend .tier-card {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+  }
+  .tier-legend .tier-card .tier-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .tier-legend .tier-card .tier-desc {
+    font-size: 12.5px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
   .toggle-row {
     display: flex;
     background: var(--panel-2);
@@ -2094,18 +2154,51 @@ function renderRosters() {
       const valueBits = [];
       if (a.ktc) valueBits.push("KTC " + a.ktc.toLocaleString());
       if (a.flock) valueBits.push("Flock " + a.flock.toLocaleString());
-      const nameLine = el("div", {}, a.name);
-      if (a.position) nameLine.appendChild(el("span", { class: "pos-chip " + positionClass(a.position), style: "margin-left:8px" }, a.position));
-      if (a.age != null) nameLine.appendChild(el("span", { class: "pct", style: "margin-left:8px" }, "age " + a.age));
-      nameLine.appendChild(el("span", { class: "auto-grade-chip " + a.tier.chip, style: "margin-left:8px" }, a.tier.label));
-      rosterCard.appendChild(el("div", { class: "pick-history-row" },
-        el("div", { class: "pick-history-slot" }, ""),
+      const nameLine = el("div", { class: "name-line" },
+        el("span", { class: "player-name" }, a.name),
+      );
+      if (a.position) nameLine.appendChild(el("span", { class: "pos-chip " + positionClass(a.position) }, a.position));
+      if (a.age != null) nameLine.appendChild(el("span", { class: "pct" }, "age " + a.age));
+      nameLine.appendChild(el("span", { class: "auto-grade-chip " + a.tier.chip }, a.tier.label));
+      rosterCard.appendChild(el("div", { class: "roster-row" },
         nameLine,
-        el("div", { class: "pick-history-by" }, valueBits.length ? valueBits.join("  ·  ") : "—"),
+        el("div", { class: "meta" }, valueBits.length ? valueBits.join("  ·  ") : "—"),
       ));
     });
   });
   main.appendChild(rosterCard);
+
+  // ===== Tier legend =====
+  const TIER_LEGEND = [
+    ["Cornerstone",              "League-winning anchor — top of the entire dynasty board in his prime. Build around him; almost untouchable in trades."],
+    ["Foundational",              "Long-term centerpiece — high-end starter, in his prime, who will drive your roster for years. Only move for another foundational asset."],
+    ["Upside Premier",            "Young player whose value already says high-end starter. Hasn't fully popped yet but the arrow is up — pay to get him, hold for the breakout."],
+    ["Mainstay",                  "Solid in-prime starter. Not the player you build around but the one who fills a starting slot every week without thinking."],
+    ["Productive Vet",            "Past the age curve but still producing as a starter. Squeezes a couple more useful seasons before the decline accelerates."],
+    ["Short Term League Winner",  "Elite-but-aging asset. Can carry a contender this year or next, then falls off a cliff. Premium for contenders, dead weight on a rebuild."],
+    ["Upside Shot",               "Young or in-prime bench piece with real upside. One coaching change or injury away from a breakout — worth the roster spot."],
+    ["Short Term Production",     "Aging starter or flex with one meaningful season left. Plug-and-play this year; don't expect more."],
+    ["Serviceable",               "Quiet bench depth. No upside path and no immediate impact, but holds a spot in case you need a body."],
+    ["Jag - Insurance",           "Older deep-bench body kept around as injury insurance. Slot a starter goes down? He plays. Otherwise invisible."],
+    ["Jag - Developmental",       "Young deep-bench dart throw. Probably never amounts to anything, but cheap to stash while you watch."],
+    ["Replaceable",               "No value, no path, no upside. Cut for any waiver claim that comes along."],
+  ];
+  const legendCard = el("div", { class: "card" }, el("h2", {}, "Tier Glossary"));
+  legendCard.appendChild(el("div", { class: "pct", style: "margin-bottom:8px" },
+    "Categories assigned daily from each player's blended value (0.7 × Flock + 0.3 × KTC) crossed with his age band on the position curve. Picks classified by value alone."
+  ));
+  const legendGrid = el("div", { class: "tier-legend" });
+  TIER_LEGEND.forEach(([label, desc]) => {
+    const info = DD_TIER_INFO[label] || { chip: "" };
+    const card = el("div", { class: "tier-card" });
+    const head = el("div", { class: "tier-head" });
+    head.appendChild(el("span", { class: "auto-grade-chip " + info.chip }, label));
+    card.appendChild(head);
+    card.appendChild(el("div", { class: "tier-desc" }, desc));
+    legendGrid.appendChild(card);
+  });
+  legendCard.appendChild(legendGrid);
+  main.appendChild(legendCard);
 
   // ===== Multi-asset Trade Explorer =====
   const tradeCard = el("div", { class: "card" }, el("h2", {}, "Suggested Trades"));
