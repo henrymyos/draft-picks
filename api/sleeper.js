@@ -1,5 +1,12 @@
-const CURRENT_LEAGUE_ID = "1312076332460425216";
+// Default league (Henry's). Any Sleeper league can be loaded by passing
+// ?league_id= — the response shape is identical.
+const DEFAULT_LEAGUE_ID = "1312076332460425216";
 const SLEEPER = "https://api.sleeper.app/v1";
+
+function resolveLeagueId(req) {
+  const q = req.query && req.query.league_id;
+  return typeof q === "string" && /^\d{10,20}$/.test(q) ? q : DEFAULT_LEAGUE_ID;
+}
 
 async function get(path) {
   const r = await fetch(`${SLEEPER}${path}`);
@@ -20,10 +27,11 @@ async function leagueChain(currentId) {
 }
 
 async function fetchSeason(lg) {
-  const [drafts, users, rosters] = await Promise.all([
+  const [drafts, users, rosters, winnersBracket] = await Promise.all([
     get(`/league/${lg.league_id}/drafts`),
     get(`/league/${lg.league_id}/users`),
     get(`/league/${lg.league_id}/rosters`),
+    get(`/league/${lg.league_id}/winners_bracket`).catch(() => []),
   ]);
 
   const draftsWithPicks = await Promise.all(drafts.map(async d => {
@@ -48,7 +56,7 @@ async function fetchSeason(lg) {
   const transactions = weekResults.flat();
   const trades = transactions.filter(t => t.type === "trade" && t.status === "complete");
 
-  return { league: lg, users, rosters, drafts: draftsWithPicks, trades };
+  return { league: lg, users, rosters, drafts: draftsWithPicks, trades, winnersBracket };
 }
 
 let playersCache = null;
@@ -64,7 +72,8 @@ async function fetchPlayers() {
 
 export default async function handler(req, res) {
   try {
-    const chain = await leagueChain(CURRENT_LEAGUE_ID);
+    const leagueId = resolveLeagueId(req);
+    const chain = await leagueChain(leagueId);
     if (!chain.length) {
       res.status(500).json({ error: "No league chain found" });
       return;
@@ -102,6 +111,15 @@ export default async function handler(req, res) {
       league_id: sd.league.league_id,
       league_name: sd.league.name,
       status: sd.league.status,
+      // League format info so the frontend can adapt to any league: starting
+      // lineup shape (drives 1QB-vs-superflex values and lineup math) and
+      // playoff size. Brackets let standings be computed for leagues that
+      // don't assign draft slots in reverse order of finish.
+      roster_positions: sd.league.roster_positions || [],
+      playoff_teams: (sd.league.settings && sd.league.settings.playoff_teams) || null,
+      winners_bracket: (sd.winnersBracket || []).map(m => ({
+        r: m.r, p: m.p != null ? m.p : null, t1: m.t1, t2: m.t2, w: m.w, l: m.l,
+      })),
       users: sd.users.map(u => ({
         user_id: u.user_id,
         display_name: u.display_name,
@@ -154,7 +172,7 @@ export default async function handler(req, res) {
     res.setHeader("Cache-Control", "s-maxage=600, stale-while-revalidate=86400");
     // All currently-pending traded picks for the current league (covers every
     // future season). Used to value each roster's pick assets.
-    const tradedPicks = await get(`/league/${CURRENT_LEAGUE_ID}/traded_picks`).catch(() => []);
+    const tradedPicks = await get(`/league/${leagueId}/traded_picks`).catch(() => []);
     const slimTradedPicks = tradedPicks.map(t => ({
       season: t.season,
       round: t.round,

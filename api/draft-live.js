@@ -2,8 +2,13 @@
 // workspace. Polled every ~15s. Cached at the CDN for 10s so heavy polling
 // doesn't slam Sleeper.
 
-const LEAGUE_ID = "1312076332460425216";
+const DEFAULT_LEAGUE_ID = "1312076332460425216";
 const SLEEPER = "https://api.sleeper.app/v1";
+
+function resolveLeagueId(req) {
+  const q = req.query && req.query.league_id;
+  return typeof q === "string" && /^\d{10,20}$/.test(q) ? q : DEFAULT_LEAGUE_ID;
+}
 
 async function get(p) {
   const r = await fetch(`${SLEEPER}${p}`);
@@ -24,10 +29,14 @@ async function getPlayers() {
 
 export default async function handler(req, res) {
   try {
-    const drafts = await get(`/league/${LEAGUE_ID}/drafts`);
+    const leagueId = resolveLeagueId(req);
+    const drafts = await get(`/league/${leagueId}/drafts`);
+    // Prefer a 3-round rookie draft (this league's convention); fall back to
+    // the most recent draft of any shape so other leagues still get a board.
     const rookieDraft = drafts
       .filter(d => d.settings && d.settings.rounds === 3)
-      .sort((a, b) => (a.created || 0) - (b.created || 0))[0];
+      .sort((a, b) => (a.created || 0) - (b.created || 0))[0]
+      || drafts.slice().sort((a, b) => (b.created || 0) - (a.created || 0))[0];
     if (!rookieDraft) {
       res.status(500).json({ error: "no rookie draft found" });
       return;
@@ -36,9 +45,9 @@ export default async function handler(req, res) {
     const [draftFull, picks, users, rosters, tradedPicks, playersDb] = await Promise.all([
       get(`/draft/${rookieDraft.draft_id}`),
       get(`/draft/${rookieDraft.draft_id}/picks`).catch(() => []),
-      get(`/league/${LEAGUE_ID}/users`),
-      get(`/league/${LEAGUE_ID}/rosters`),
-      get(`/league/${LEAGUE_ID}/traded_picks`).catch(() => []),
+      get(`/league/${leagueId}/users`),
+      get(`/league/${leagueId}/rosters`),
+      get(`/league/${leagueId}/traded_picks`).catch(() => []),
       getPlayers(),
     ]);
 
@@ -78,7 +87,7 @@ export default async function handler(req, res) {
         draft_id: rookieDraft.draft_id,
         status: rookieDraft.status,
         season: rookieDraft.season,
-        rounds: rookieDraft.settings.rounds,
+        rounds: (rookieDraft.settings && rookieDraft.settings.rounds) || 3,
         slot_to_roster_id: draftFull.slot_to_roster_id || {},
         type: rookieDraft.type,
         start_time: rookieDraft.start_time,

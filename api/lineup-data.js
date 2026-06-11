@@ -2,9 +2,14 @@
 // bundled for the Lineup and Waivers views. Frontend scores each projection
 // using your league's scoring_settings (same math as /api/player-stats used).
 
-const LEAGUE_ID = "1312076332460425216";
+const DEFAULT_LEAGUE_ID = "1312076332460425216";
 const SLEEPER_V1 = "https://api.sleeper.app/v1";
 const SLEEPER_V2 = "https://api.sleeper.com";
+
+function resolveLeagueId(req) {
+  const q = req.query && req.query.league_id;
+  return typeof q === "string" && /^\d{10,20}$/.test(q) ? q : DEFAULT_LEAGUE_ID;
+}
 
 async function get(url) {
   const r = await fetch(url);
@@ -14,6 +19,7 @@ async function get(url) {
 
 export default async function handler(req, res) {
   try {
+    const LEAGUE_ID = resolveLeagueId(req);
     const [stateNfl, league] = await Promise.all([
       get(`${SLEEPER_V1}/state/nfl`),
       get(`${SLEEPER_V1}/league/${LEAGUE_ID}`),

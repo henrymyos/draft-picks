@@ -38,14 +38,17 @@ function normalizeName(s) {
     .trim();
 }
 
-let cache = null;
-let cacheAt = 0;
+// Cached per value format: "sf" (superflex, the default) or "1qb", so any
+// league shape gets the right value scale.
+const caches = {};  // format → { data, at }
 const TTL_MS = 60 * 60 * 1000;  // 1 hour
 
 export default async function handler(req, res) {
-  if (cache && Date.now() - cacheAt < TTL_MS) {
+  const format = req.query && req.query.format === "1qb" ? "1qb" : "sf";
+  const hit = caches[format];
+  if (hit && Date.now() - hit.at < TTL_MS) {
     res.setHeader("Cache-Control", "s-maxage=3600");
-    res.json(cache);
+    res.json(hit.data);
     return;
   }
   try {
@@ -73,7 +76,7 @@ export default async function handler(req, res) {
     }
     for (const p of players) {
       if (!p.playerName) continue;
-      const sf = p.superflexValues || {};
+      const sf = (format === "1qb" ? p.oneQBValues : p.superflexValues) || {};
       const val = sf.value || 0;
       if (p.position === "RDP" || p.position === "PICK") {
         const parsed = parsePickName(p.playerName);
@@ -91,10 +94,10 @@ export default async function handler(req, res) {
         rookie: !!p.rookie,
       };
     }
-    cache = { players: byName, picks, updated: Date.now() };
-    cacheAt = Date.now();
+    const data = { players: byName, picks, format, updated: Date.now() };
+    caches[format] = { data, at: Date.now() };
     res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=86400");
-    res.json(cache);
+    res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

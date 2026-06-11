@@ -1183,6 +1183,7 @@
       <span class="status-dot" id="statusDot"></span>
       <span id="statusText">Loading…</span>
       <button class="refresh" id="refreshBtn">Refresh</button>
+      <button class="refresh" id="leagueBtn" title="View a different Sleeper league">League</button>
     </div>
   </div>
   <nav class="tabs" id="tabsNav"></nav>
@@ -1196,6 +1197,46 @@
 </footer>
 <script>
 const REFRESH_MS = 60_000;
+
+// ---------- League context ----------
+// The site defaults to Henry's league but can render any Sleeper league via
+// ?league=<id>. Non-default leagues skip everything sourced from the Google
+// Sheets (draft grades, all-time records) and the hand-curated name merges.
+const DEFAULT_LEAGUE_ID = "1312076332460425216";
+const LEAGUE_ID = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get("league");
+    return q && /^\d{10,20}$/.test(q.trim()) ? q.trim() : DEFAULT_LEAGUE_ID;
+  } catch { return DEFAULT_LEAGUE_ID; }
+})();
+const IS_DEFAULT_LEAGUE = LEAGUE_ID === DEFAULT_LEAGUE_ID;
+
+// Superflex if the league starts 2+ QBs or has a SUPER_FLEX slot. Defaults to
+// superflex until Sleeper data arrives (correct for the default league).
+function leagueIsSuperflex() {
+  if (IS_DEFAULT_LEAGUE) return true;
+  if (!state.sleeper || !state.sleeper.seasons.length) return true;
+  const latest = state.sleeper.seasons[state.sleeper.seasons.length - 1];
+  const rp = latest.roster_positions || [];
+  return rp.includes("SUPER_FLEX") || rp.filter(s => s === "QB").length >= 2;
+}
+
+// "My team" in a non-default league: claimed via the Live Draft "I am"
+// dropdown (stored per league). The default league is always Henry.
+const LS_MY_TEAM = "dp.myTeam." + LEAGUE_ID;
+function myTeamName() {
+  if (IS_DEFAULT_LEAGUE) return "Henry";
+  try {
+    const uid = localStorage.getItem(LS_MY_TEAM);
+    if (!uid || !state.sleeper || !state.sleeper.seasons.length) return null;
+    const latest = state.sleeper.seasons[state.sleeper.seasons.length - 1];
+    const u = latest.users.find(x => x.user_id === uid);
+    return u ? canonicalOwnerName(userDisplay(u)) : null;
+  } catch { return null; }
+}
+function setMyTeam(userId) {
+  try { localStorage.setItem(LS_MY_TEAM, userId); } catch {}
+}
 
 // Fixed color → position mapping. Cells in the sheet are colored:
 //   red → QB, green → RB, blue → WR, orange → TE
@@ -1778,7 +1819,7 @@ function computeManagerRankings() {
 
   const currentRookieDraft = (latestSeason.drafts || []).find(
     d => d.rounds === 3 && (d.status === "pre_draft" || d.status === "drafting" || d.status === "complete")
-  );
+  ) || (latestSeason.drafts || [])[0];  // other leagues: any draft shape
   const slotMap = currentRookieDraft ? currentRookieDraft.slot_to_roster_id || {} : {};
   const currentYear = parseInt(latestSeason.season, 10);
 
@@ -1786,14 +1827,28 @@ function computeManagerRankings() {
     return ktcPicks[`${season}|${tier}|${round}`] || 0;
   }
 
-  const STARTING_SLOTS = [
-    { pos: ["QB"], n: 1 },
-    { pos: ["RB"], n: 2 },
-    { pos: ["WR"], n: 3 },
-    { pos: ["TE"], n: 1 },
-    { pos: ["RB", "WR", "TE"], n: 1 },
-    { pos: ["QB", "RB", "WR", "TE"], n: 1 },
-  ];
+  // Starting-lineup shape from the league's actual roster_positions, so the
+  // contender math adapts to any league. Falls back to the default league's
+  // shape (1QB/2RB/3WR/1TE/FLX/SF) if the field is missing.
+  const STARTING_SLOTS = (() => {
+    const rp = latestSeason.roster_positions || [];
+    const counts = {};
+    rp.forEach(s => { counts[s] = (counts[s] || 0) + 1; });
+    const slots = [];
+    ["QB", "RB", "WR", "TE"].forEach(p => { if (counts[p]) slots.push({ pos: [p], n: counts[p] }); });
+    if (counts["WRRB_FLEX"]) slots.push({ pos: ["RB", "WR"], n: counts["WRRB_FLEX"] });
+    if (counts["REC_FLEX"]) slots.push({ pos: ["WR", "TE"], n: counts["REC_FLEX"] });
+    if (counts["FLEX"]) slots.push({ pos: ["RB", "WR", "TE"], n: counts["FLEX"] });
+    if (counts["SUPER_FLEX"]) slots.push({ pos: ["QB", "RB", "WR", "TE"], n: counts["SUPER_FLEX"] });
+    return slots.length ? slots : [
+      { pos: ["QB"], n: 1 },
+      { pos: ["RB"], n: 2 },
+      { pos: ["WR"], n: 3 },
+      { pos: ["TE"], n: 1 },
+      { pos: ["RB", "WR", "TE"], n: 1 },
+      { pos: ["QB", "RB", "WR", "TE"], n: 1 },
+    ];
+  })();
 
   // Pass 1: player value + optimal lineup value per roster (no picks yet —
   // the contender ranks derived from this pass decide the projected tier of
@@ -2364,7 +2419,7 @@ function renderRosters() {
   // ---------- Pick ownership map ----------
   const currentRookieDraft = (latestSeason.drafts || []).find(
     d => d.rounds === 3 && (d.status === "pre_draft" || d.status === "drafting" || d.status === "complete")
-  );
+  ) || (latestSeason.drafts || [])[0];  // other leagues: any draft shape
   const slotMap = currentRookieDraft ? currentRookieDraft.slot_to_roster_id || {} : {};
   const currentYear = parseInt(latestSeason.season, 10);
   // Future-pick tier projection from current contender ranks (strong lineup
@@ -4064,17 +4119,28 @@ async function loadSleeper(force = false) {
   state.sleeperError = null;
   render();
   try {
-    const res = await fetch("/api/sleeper" + (force ? "?_=" + Date.now() : ""), { cache: "no-store" });
+    const res = await fetch("/api/sleeper?league_id=" + LEAGUE_ID + (force ? "&_=" + Date.now() : ""), { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
     state.sleeper = data;
-    // Default every "selected user" dropdown to Henry on first load.
-    const henryId = findUserIdByCanonicalName("Henry");
-    if (henryId) {
-      if (state.rosterTeam == null) state.rosterTeam = henryId;
-      if (state.draft.myUserId == null) state.draft.myUserId = henryId;
-      if (state.tradesUserId == null) state.tradesUserId = henryId;
+    // Surface the league's own name in the header when browsing another league.
+    if (!IS_DEFAULT_LEAGUE && data.seasons.length) {
+      const name = data.seasons[data.seasons.length - 1].league_name;
+      if (name) {
+        const h1 = document.querySelector("header h1");
+        if (h1) h1.textContent = "🏈 " + name;
+        document.title = name + " — Draft Picks Tracker";
+      }
+    }
+    // Default every "selected user" dropdown to "my team" on first load —
+    // Henry in the default league, the claimed team elsewhere.
+    const mine = myTeamName();
+    const myId = mine ? findUserIdByCanonicalName(mine) : null;
+    if (myId) {
+      if (state.rosterTeam == null) state.rosterTeam = myId;
+      if (state.draft.myUserId == null) state.draft.myUserId = myId;
+      if (state.tradesUserId == null) state.tradesUserId = myId;
     }
   } catch (e) {
     state.sleeperError = e.message;
@@ -4183,7 +4249,8 @@ async function loadKtcDynasty() {
   state.ktcDynastyError = null;
   render();
   try {
-    const res = await fetch("/api/ktc-dynasty", { cache: "no-store" });
+    const fmt = leagueIsSuperflex() ? "sf" : "1qb";
+    const res = await fetch("/api/ktc-dynasty?format=" + fmt, { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -4196,6 +4263,9 @@ async function loadKtcDynasty() {
   }
 }
 function ensureKtcDynastyLoaded() {
+  // Non-default leagues must know their format (1QB vs SF) before fetching
+  // KTC values; wait for Sleeper data, which re-renders and retries this.
+  if (!IS_DEFAULT_LEAGUE && !state.sleeper) return;
   if (!state.ktcDynasty && !state.ktcDynastyLoading && !state.ktcDynastyError) loadKtcDynasty();
 }
 
@@ -4205,7 +4275,7 @@ async function loadLineupData() {
   state.lineupDataError = null;
   render();
   try {
-    const res = await fetch("/api/lineup-data", { cache: "no-store" });
+    const res = await fetch("/api/lineup-data?league_id=" + LEAGUE_ID, { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
@@ -4456,6 +4526,9 @@ const _OWNER_MERGES_NORM = (() => {
 })();
 function canonicalOwnerName(name) {
   if (!name) return name;
+  // The merge table is hand-curated for the default league only; other
+  // leagues use raw Sleeper names.
+  if (!IS_DEFAULT_LEAGUE) return name;
   return _OWNER_MERGES_NORM[_normalizeOwnerKey(name)] || name;
 }
 
@@ -4735,7 +4808,10 @@ function computeLeagueHistory() {
   for (let i = 0; i < seasons.length; i++) {
     const season = seasons[i];
     const next = seasons[i + 1];
-    const entry = { year: season.season, finishes: {}, records: {}, teams: 0, hasGames: false };
+    const entry = {
+      year: season.season, finishes: {}, records: {}, teams: 0, hasGames: false,
+      playoffTeams: season.playoff_teams || null,
+    };
     season.rosters.forEach(r => {
       const u = season.users.find(x => x.user_id === r.owner_id);
       if (!u) return;
@@ -4746,7 +4822,10 @@ function computeLeagueHistory() {
         entry.records[name] = w + "-" + l + (t ? "-" + t : "");
       }
     });
-    if (next) {
+    if (IS_DEFAULT_LEAGUE && next) {
+      // This league assigns next season's draft slots in reverse order of
+      // finish, which captures even the consolation placements the Sleeper
+      // bracket gets wrong. Verified against the league sheet for 2019-2025.
       const draft = (next.drafts || []).find(d => d.slot_to_roster_id && Object.keys(d.slot_to_roster_id).length);
       if (draft) {
         const slots = Object.entries(draft.slot_to_roster_id);
@@ -4756,6 +4835,32 @@ function computeLeagueHistory() {
           const user = rosterToOwner(next, rid);
           if (!user) return;
           entry.finishes[canonicalUserName(user)] = n + 1 - parseInt(slot, 10);
+        });
+      }
+    } else if (!IS_DEFAULT_LEAGUE) {
+      // Generic leagues: placement games (p:1 = title, p:3 = 3rd, …) from the
+      // winners bracket decide the playoff places; everyone else ranks by
+      // regular-season record, then points. Only complete seasons count.
+      const bracket = season.winners_bracket || [];
+      const places = {};
+      bracket.forEach(m => {
+        if (m.p != null && m.w != null && m.l != null) {
+          places[m.w] = m.p;
+          places[m.l] = m.p + 1;
+        }
+      });
+      const titleDecided = bracket.some(m => m.p === 1 && m.w != null);
+      if (titleDecided) {
+        const n = season.rosters.length;
+        entry.teams = n;
+        const placed = Object.keys(places).length;
+        const rest = season.rosters
+          .filter(r => places[r.roster_id] == null)
+          .sort((a, b) => (b.wins || 0) - (a.wins || 0) || (b.fpts || 0) - (a.fpts || 0));
+        rest.forEach((r, idx) => { places[r.roster_id] = placed + idx + 1; });
+        season.rosters.forEach(r => {
+          const u = season.users.find(x => x.user_id === r.owner_id);
+          if (u && places[r.roster_id] != null) entry.finishes[canonicalUserName(u)] = places[r.roster_id];
         });
       }
     }
@@ -4859,7 +4964,7 @@ function renderHistory() {
   main.innerHTML = "";
   ensureSleeperLoaded();
   ensureKtcDynastyLoaded();
-  ensureAlltimeLoaded();
+  if (IS_DEFAULT_LEAGUE) ensureAlltimeLoaded();
 
   if (state.sleeperLoading) {
     main.appendChild(el("div", { class: "empty" }, "Loading from Sleeper…"));
@@ -4882,7 +4987,7 @@ function renderHistory() {
   // same math as the league sheet (AVG Finish excludes the current year).
   const managers = {};
   finishedYears.forEach(y => {
-    const playoffCut = Math.floor((y.teams || 12) / 2);
+    const playoffCut = y.playoffTeams || Math.floor((y.teams || 12) / 2);
     Object.entries(y.finishes).forEach(([name, place]) => {
       const m = managers[name] || (managers[name] = { name, finishes: [], wins: 0, top2: 0, top3: 0, playoffs: 0 });
       m.finishes.push(place);
@@ -4906,12 +5011,14 @@ function renderHistory() {
   });
   const names = mgrList.map(m => m.name);
 
-  function finClass(place, teams) {
+  function finClass(place, y) {
+    const teams = y.teams || 12;
+    const cut = y.playoffTeams || Math.floor(teams / 2);
     if (place === 1) return "fin-1";
     if (place === 2) return "fin-2";
     if (place === 3) return "fin-3";
-    if (place <= Math.floor((teams || 12) / 2)) return "fin-po";
-    if (place >= (teams || 12) - 2) return "fin-bot";
+    if (place <= cut) return "fin-po";
+    if (place >= teams - 2) return "fin-bot";
     return "";
   }
 
@@ -4928,7 +5035,7 @@ function renderHistory() {
       el("td", {}, y.year),
       ...names.map(n => {
         const place = y.finishes[n];
-        return el("td", { class: place != null ? finClass(place, y.teams) : "" },
+        return el("td", { class: place != null ? finClass(place, y) : "" },
           place != null ? String(place) : "—");
       }),
     ));
@@ -4975,7 +5082,9 @@ function renderHistory() {
   sTable.appendChild(sBody);
   standCard.appendChild(sTable);
   standCard.appendChild(el("div", { class: "hist-note" },
-    "Standings derived from the next season's rookie-draft order (reverse of finish). " +
+    (IS_DEFAULT_LEAGUE
+      ? "Standings derived from the next season's rookie-draft order (reverse of finish). "
+      : "Playoff places from the bracket; non-playoff teams ranked by record, then points. ") +
     "Gold / silver / bronze = top three, green = made playoffs, red = bottom three. " +
     (latestDone ? "" : "* Projected from current contender rankings.")));
   main.appendChild(standCard);
@@ -5006,7 +5115,8 @@ function renderHistory() {
     "Champion highlighted gold, runner-up blue."));
   main.appendChild(recCard);
 
-  // ----- All-time record sheet (includes pre-Sleeper seasons) -----
+  // ----- All-time record sheet (includes pre-Sleeper seasons; this league only) -----
+  if (!IS_DEFAULT_LEAGUE) return;
   if (state.alltimeLoading) {
     main.appendChild(el("div", { class: "empty" }, "Loading all-time records…"));
     return;
@@ -5058,12 +5168,12 @@ async function loadDraftLive() {
   state.draft.error = null;
   try {
     const fetches = [
-      fetch("/api/draft-live?_=" + Date.now(), { cache: "no-store" }),
+      fetch("/api/draft-live?league_id=" + LEAGUE_ID + "&_=" + Date.now(), { cache: "no-store" }),
       fetch("/api/ktc-live", { cache: "no-store" }),
       fetch("/api/flock-live?_=" + Date.now(), { cache: "no-store" }),
     ];
     if (!state.draft.ktcDynasty) {
-      fetches.push(fetch("/api/ktc-dynasty", { cache: "no-store" }));
+      fetches.push(fetch("/api/ktc-dynasty?format=" + (leagueIsSuperflex() ? "sf" : "1qb"), { cache: "no-store" }));
     }
     const results = await Promise.all(fetches);
     const [draftRes, ktcRes, flockRes, dynRes] = results;
@@ -5117,12 +5227,17 @@ function ktcNorm(s) {
     .trim();
 }
 
-// Tabs are workspace-aware: each workspace has its own list.
+// Tabs are workspace-aware: each workspace has its own list. Non-default
+// leagues drop the Google-Sheet-driven tabs (Overview / Drafters / Stats),
+// which only exist for the home league.
 const WORKSPACE_TABS = {
-  drafts: [
+  drafts: IS_DEFAULT_LEAGUE ? [
     { view: "overview", label: "Overview" },
     { view: "leaderboard", label: "Drafters" },
     { view: "stats", label: "Stats" },
+    { view: "trades", label: "Trades" },
+    { view: "history", label: "History" },
+  ] : [
     { view: "trades", label: "Trades" },
     { view: "history", label: "History" },
   ],
@@ -5154,11 +5269,14 @@ function sortUsersHenryFirst(users) {
       });
     }
   }
+  const mine = myTeamName();
   return users.slice().sort((a, b) => {
     const aName = canonicalOwnerName(userDisplay(a));
     const bName = canonicalOwnerName(userDisplay(b));
-    if (aName === "Henry" && bName !== "Henry") return -1;
-    if (bName === "Henry" && aName !== "Henry") return 1;
+    if (mine != null) {
+      if (aName === mine && bName !== mine) return -1;
+      if (bName === mine && aName !== mine) return 1;
+    }
     if (valueByUserId) {
       const av = valueByUserId[a.user_id] != null ? valueByUserId[a.user_id] : -1;
       const bv = valueByUserId[b.user_id] != null ? valueByUserId[b.user_id] : -1;
@@ -5216,10 +5334,11 @@ function setWorkspace(ws) {
     stopDraftPolling();
   }
 
-  // Default to Henry on first entry to My Team workspace.
+  // Default to "my team" on first entry to My Team workspace.
   if (ws === "team" && state.rosterTeam == null) {
-    const henryId = findUserIdByCanonicalName("Henry");
-    if (henryId) state.rosterTeam = henryId;
+    const mine = myTeamName();
+    const myId = mine ? findUserIdByCanonicalName(mine) : null;
+    if (myId) state.rosterTeam = myId;
   }
 
   rebuildTabsNav();
@@ -5258,6 +5377,7 @@ function renderDraftWorkspace() {
   controls.appendChild(customSelect(userOpts, state.draft.myUserId, v => {
     state.draft.myUserId = v;
     try { localStorage.setItem(LS_DRAFT_USER, v); } catch {}
+    setMyTeam(v);  // doubles as the "claim your team" picker per league
     render();
   }));
   main.appendChild(controls);
@@ -5832,8 +5952,10 @@ function render() {
     return;
   }
 
-  // Drafts workspace requires sheet picks; team-workspace tabs don't.
-  if (state.workspace === "drafts" && !state.picks.length) {
+  // Drafts workspace requires sheet picks — but only for the sheet-driven
+  // tabs of the default league. Trades / History run off Sleeper data.
+  const SHEET_VIEWS = new Set(["overview", "leaderboard", "stats", "year", "person"]);
+  if (state.workspace === "drafts" && SHEET_VIEWS.has(state.view) && !state.picks.length) {
     document.getElementById("main").innerHTML = '<div class="empty">No draft data available.</div>';
     return;
   }
@@ -5867,6 +5989,14 @@ function setStatus(kind, text) {
 }
 
 async function loadData() {
+  // Non-default leagues have no Google Sheet; Sleeper data drives everything.
+  if (!IS_DEFAULT_LEAGUE) {
+    ensureSleeperLoaded();
+    state.lastUpdated = new Date();
+    setStatus("ok", "Updated " + state.lastUpdated.toLocaleTimeString());
+    render();
+    return;
+  }
   setStatus("loading", "Refreshing…");
   try {
     const res = await fetch("/api/sheet?_=" + Date.now(), { cache: "no-store" });
@@ -5897,9 +6027,29 @@ async function loadData() {
 document.querySelectorAll(".ws-btn").forEach(b => {
   b.addEventListener("click", () => setWorkspace(b.dataset.ws));
 });
+// Non-default leagues have no rookie-draft sheet, so the workspace is just
+// league-wide Sleeper views.
+if (!IS_DEFAULT_LEAGUE) {
+  const draftsBtn = document.querySelector('.ws-btn[data-ws="drafts"]');
+  if (draftsBtn) draftsBtn.textContent = "League";
+}
 document.getElementById("refreshBtn").addEventListener("click", () => {
   if (state.workspace === "team" && state.view === "liveDraft") loadDraftLive();
   else loadData();
+});
+document.getElementById("leagueBtn").addEventListener("click", () => {
+  const input = prompt(
+    "Enter a Sleeper league ID to view that league.\nLeave empty to return to the home league.",
+    IS_DEFAULT_LEAGUE ? "" : LEAGUE_ID
+  );
+  if (input == null) return;  // cancelled
+  const id = input.trim();
+  if (!id) {
+    if (!IS_DEFAULT_LEAGUE) location.href = location.pathname;
+    return;
+  }
+  if (!/^\d{10,20}$/.test(id)) { alert("That doesn't look like a Sleeper league ID (it's a long number)."); return; }
+  if (id !== LEAGUE_ID) location.href = location.pathname + "?league=" + id;
 });
 
 // Initial bootstrap
