@@ -1865,7 +1865,9 @@ const POSITION_AGE_CURVE = {
   QB: { rising: 26, cliff: 33 },   // QBs hold value the longest
   WR: { rising: 24, cliff: 28 },
   TE: { rising: 25, cliff: 30 },
-  RB: { rising: 23, cliff: 26 },   // RBs age fastest
+  // RB cliff at 28 (not 26): Dynasty Domain still rates 26-27yo RBs like
+  // James Cook and Jonathan Taylor as Foundational, not short-term assets.
+  RB: { rising: 23, cliff: 28 },
 };
 
 // Dynasty Domain-style 12-tier categorization. Derived from KTC blended value
@@ -1911,17 +1913,20 @@ function classifyAsset(ktcValue, position, age) {
   }
 
   // KTC superflex value only — Flock is not used for the tier label.
-  // Cornerstone cutoff (6600) tuned against the Dynasty Domain chart: catches
-  // 22 of their 23 cornerstones (Bijan 9999 down to Mahomes 6648); Jordan
-  // Love (5579) is the lone miss and lands Foundational. Lower bands verified
-  // against Henry-roster ground truth (Goff 4664 / Kyler 4140 = Mainstay,
+  // Cornerstone cutoff (6600) tuned against the Dynasty Domain chart: all 23
+  // of their cornerstones qualify (Bijan 9999 down to Mahomes 6648; J. Love
+  // is Jeremiyah Love at 7599). Foundational floor (5400) catches 15 of their
+  // 17 foundational players; the two misses are unavoidable with KTC alone —
+  // Herbert (6898) values above several chart Cornerstones, and Rashee Rice
+  // (4563) values below Goff (4664), whom we pin as Mainstay. Lower bands
+  // verified against Henry-roster ground truth (Goff / Kyler = Mainstay,
   // LaPorta 4512 = Upside Premier, Strange/Coker/Helm/Bigsby/Marks/Tucker
   // 2210-3051 = Upside Shot, Miller 1824 = Jag - Developmental).
   const band = ageBand(position, age);  // "young" | "prime" | "old"
   let label;
   if (ktcValue >= 6600) {
     label = band === "old" ? "Short Term League Winner" : "Cornerstone";
-  } else if (ktcValue >= 5500) {
+  } else if (ktcValue >= 5400) {
     label = band === "old" ? "Short Term League Winner" : "Foundational";
   } else if (ktcValue >= 4000) {
     label = band === "young" ? "Upside Premier"
