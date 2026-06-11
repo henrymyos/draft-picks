@@ -1883,51 +1883,41 @@ function ageBand(position, age) {
   return "prime";
 }
 
-function classifyAsset(blended, position, age) {
-  if (blended == null) blended = 0;
+function classifyAsset(ktcValue, position, age) {
+  if (ktcValue == null) ktcValue = 0;
   // Picks: value only.
   if (position === "PICK") {
     let label;
-    if (blended >= 5500) label = "Foundational";
-    else if (blended >= 3500) label = "Mainstay";
-    else if (blended >= 1800) label = "Upside Shot";
+    if (ktcValue >= 5500) label = "Foundational";
+    else if (ktcValue >= 3500) label = "Mainstay";
+    else if (ktcValue >= 1800) label = "Upside Shot";
     else label = "Replaceable";
     return Object.assign({ label }, DD_TIER_INFO[label]);
   }
 
-  // NOTE: `blended` is 0.7 * Flock + 0.3 * KTC (or whichever single source is
-  // available). Flock's value range is much higher than KTC's, so cutoffs are
-  // tuned against the blended space — not raw KTC. Verified against current
-  // Henry-roster ground truth (Hampton 8728 = Foundational, Goff 7580 =
-  // Mainstay, LaPorta 6989 = Upside Premier, Strange 5672 = Upside Shot, etc.).
+  // KTC superflex value only — Flock is not used for the tier label. Cutoffs
+  // verified against Henry-roster ground truth (Hampton 6884 = Foundational,
+  // Goff 4664 / Kyler 4140 = Mainstay, LaPorta 4512 = Upside Premier,
+  // Strange 2958 / Coker 3051 / Helm 2632 / Bigsby 2479 / Marks 2758 /
+  // Tucker 2210 = Upside Shot, Miller 1824 = Jag - Developmental,
+  // Brosmer 0 = Replaceable).
   const band = ageBand(position, age);  // "young" | "prime" | "old"
   let label;
-  // Elite tier
-  if (blended >= 9000) {
+  if (ktcValue >= 8500) {
     label = band === "old" ? "Short Term League Winner" : "Cornerstone";
-  }
-  // High-end starter
-  else if (blended >= 8000) {
+  } else if (ktcValue >= 5500) {
     label = band === "old" ? "Short Term League Winner" : "Foundational";
-  }
-  // Solid starter
-  else if (blended >= 6500) {
+  } else if (ktcValue >= 4000) {
     label = band === "young" ? "Upside Premier"
           : band === "prime" ? "Mainstay"
           : "Productive Vet";
-  }
-  // Bench / spec piece
-  else if (blended >= 1500) {
+  } else if (ktcValue >= 2000) {
     label = band === "old" ? "Short Term Production" : "Upside Shot";
-  }
-  // Narrow borderline band: still worth a roster spot, barely.
-  else if (blended >= 1300) {
+  } else if (ktcValue >= 1300) {
     if (band === "young") label = "Jag - Developmental";
     else if (band === "old") label = "Jag - Insurance";
     else label = "Serviceable";
-  }
-  // Anything below ~1300 KTC reads as cuttable — drop for any waiver claim.
-  else {
+  } else {
     label = "Replaceable";
   }
   return Object.assign({ label }, DD_TIER_INFO[label]);
@@ -2045,7 +2035,7 @@ function renderRosters() {
       age: p.age,
       ktc, flock,
       value: blended,
-      tier: classifyAsset(blended, p.position, p.age),
+      tier: classifyAsset(ktc, p.position, p.age),
     };
   }
   function assetsForRoster(rosterId) {
@@ -2179,7 +2169,7 @@ function renderRosters() {
   ];
   const legendCard = el("div", { class: "card" }, el("h2", {}, "Tier Glossary"));
   legendCard.appendChild(el("div", { class: "pct", style: "margin-bottom:8px" },
-    "Categories assigned daily from each player's blended value (0.7 × Flock + 0.3 × KTC) crossed with his age band on the position curve. Picks classified by value alone."
+    "Categories assigned daily from each player's KTC superflex dynasty value crossed with his age band on the position curve. Picks classified by value alone."
   ));
   const legendGrid = el("div", { class: "tier-legend" });
   TIER_LEGEND.forEach(([label, desc]) => {
