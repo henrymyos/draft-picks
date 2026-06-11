@@ -2121,11 +2121,19 @@ function classifyAsset(ktcValue, position, age, playerId) {
     const rank = posProjectionRank(playerId);
     if (rank != null && rank <= 12) band = "prime";
   }
+  // Established young vet: 3+ NFL seasons at starter-level value means the
+  // book is mostly written — Stroud / LaPorta / Addison / Kraft read Mainstay,
+  // while 1-2 year players (Ward, Odunze, Harrison) keep Upside Premier.
+  // Gated to >= 3800 so 3rd-year bench stashes (Kendre Miller) stay young.
+  if (band === "young" && ktcValue >= 3800 && playerId != null && state.sleeper && state.sleeper.players) {
+    const sp = state.sleeper.players[playerId];
+    if (sp && typeof sp.years_exp === "number" && sp.years_exp >= 3) band = "prime";
+  }
   // "Aging" = late-prime — past the position's growth years but before the
-  // cliff. These players still produce but their dynasty value only declines:
-  // Baker/Goff/Darnold/Kyler (QB 28-31) are Productive Vets; Willis/Jones/
-  // Swift (lower value) are Short Term Production.
-  const AGING_AGE = { QB: 27, RB: 27, WR: 27, TE: 29 };
+  // cliff. Aging QBs (Baker/Goff/Darnold/Kyler, 28+) are Productive Vets;
+  // aging WR/RB/TEs at starter value (Higgins, Waddle, Etienne, 27+) are
+  // Mainstays; lower-value aging players are Short Term Production.
+  const AGING_AGE = { QB: 28, RB: 27, WR: 27, TE: 29 };
   const aging = band === "prime" && age != null && age >= (AGING_AGE[position] || 27);
   let label;
   if (band === "old") {
@@ -2133,19 +2141,21 @@ function classifyAsset(ktcValue, position, age, playerId) {
     // (CMC 30, Henry 32, Adams 33, Evans 32) are Short Term League Winners —
     // they can carry a contender right now but have no future. Old-but-not-
     // ancient producers (Saquon 29, Jacobs 28, DJ Moore 29, Pittman 28,
-    // Metcalf 28, Kittle 32) are Productive Vets.
+    // Metcalf 28, Kittle 32) are Productive Vets — except high-value old WRs
+    // (AJ Brown), who still read Mainstay.
     const ANCIENT_AGE = { QB: 36, RB: 30, WR: 32, TE: 33 };
     const ancient = age != null && age >= (ANCIENT_AGE[position] || 33);
-    if (ktcValue >= 3000) label = ancient ? "Short Term League Winner" : "Productive Vet";
+    if (!ancient && position === "WR" && ktcValue >= 4500) label = "Mainstay";
+    else if (ktcValue >= 3000) label = ancient ? "Short Term League Winner" : "Productive Vet";
     else if (ktcValue >= 2000) label = "Short Term Production";
     else if (ktcValue >= 1300) label = "Jag - Insurance";
     else label = "Replaceable";
   } else if (ktcValue >= 6600) {
     label = "Cornerstone";
-  } else if (ktcValue >= 5400) {
+  } else if (ktcValue >= 5600) {
     label = "Foundational";
   } else if (ktcValue >= 3800) {
-    if (aging) label = ktcValue >= 4000 ? "Productive Vet" : "Short Term Production";
+    if (aging) label = ktcValue >= 4000 ? (position === "QB" ? "Productive Vet" : "Mainstay") : "Short Term Production";
     else if (band === "young") label = "Upside Premier";
     else label = "Mainstay";
   } else if (ktcValue >= 2000) {
