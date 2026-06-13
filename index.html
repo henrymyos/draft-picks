@@ -3724,59 +3724,6 @@ function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
 
-  // ----- Every pick slot (1.01 … 3.12) aggregated across all years -----
-  main.appendChild(el("div", { class: "section-header" }, "Every Pick",
-    el("span", { class: "section-sub" }, "Hit rate of each exact draft slot across all years")));
-  const slotCard = el("div", { class: "card" }, el("h2", {}, "By Exact Pick"));
-  const slotTable = el("table", {},
-    el("thead", {}, el("tr", {},
-      el("th", {}, "Pick"),
-      el("th", { class: "num" }, "Picks"),
-      el("th", { class: "num tight" }, "Hit"),
-      el("th", { class: "num tight" }, "Meh"),
-      el("th", { class: "num tight" }, "Miss"),
-      el("th", { class: "num tight gap-left" }, "Hit %"),
-      el("th", { class: "num tight" }, "Hit + Meh"),
-      el("th", { class: "mobile-hide" }, "Mix"),
-    )),
-  );
-  const slotBody = el("tbody", {});
-  // One row per (round, pickInRound) slot that exists in the data, aggregating
-  // every year. Picks-per-round = league size, so 10- and 12-team both work.
-  const maxPickByRound = {};
-  state.picks.forEach(p => {
-    if (!p.round || !p.pickInRound) return;
-    maxPickByRound[p.round] = Math.max(maxPickByRound[p.round] || 0, p.pickInRound);
-  });
-  [1, 2, 3].forEach(rd => {
-    const maxPick = maxPickByRound[rd];
-    if (!maxPick) return;
-    for (let pir = 1; pir <= maxPick; pir++) {
-      const slotPicks = state.picks.filter(p => p.round === rd && p.pickInRound === pir);
-      if (!slotPicks.length) continue;
-      const t = tally(slotPicks);
-      const slot = rd + "." + String(pir).padStart(2, "0");
-      slotBody.appendChild(el("tr", {
-        class: "row-clickable",
-        onclick: () => showPicksModal("Pick " + slot, slotPicks),
-      },
-        el("td", {}, slot),
-        el("td", { class: "num" }, String(t.total)),
-        el("td", { class: "num tight" }, String(t.hit)),
-        el("td", { class: "num tight" }, String(t.meh)),
-        el("td", { class: "num tight" }, String(t.miss)),
-        el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
-        el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
-        el("td", { class: "mobile-hide" }, renderBar(t)),
-      ));
-    }
-  });
-  slotTable.appendChild(slotBody);
-  slotCard.appendChild(slotTable);
-  slotCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
-    "Each row is one exact pick slot across every draft year. Click a row to see every player taken there, oldest first."));
-  main.appendChild(slotCard);
-
   // ----- Year × Round matrix -----
   main.appendChild(el("div", { class: "section-header" }, "League Overview",
     el("span", { class: "section-sub" }, "How the league as a whole has drafted")));
@@ -3944,6 +3891,59 @@ function renderStats() {
     posCard.appendChild(posTable);
   }
   main.appendChild(posCard);
+
+  // ----- Every pick slot (1.01 … 3.12) aggregated across all years -----
+  main.appendChild(el("div", { class: "section-header" }, "Every Pick",
+    el("span", { class: "section-sub" }, "Hit rate of each exact draft slot across all years")));
+  const slotCard = el("div", { class: "card" }, el("h2", {}, "By Exact Pick"));
+  const slotTable = el("table", {},
+    el("thead", {}, el("tr", {},
+      el("th", {}, "Pick"),
+      el("th", { class: "num" }, "Picks"),
+      el("th", { class: "num tight" }, "Hit"),
+      el("th", { class: "num tight" }, "Meh"),
+      el("th", { class: "num tight" }, "Miss"),
+      el("th", { class: "num tight gap-left" }, "Hit %"),
+      el("th", { class: "num tight" }, "Hit + Meh"),
+      el("th", { class: "mobile-hide" }, "Mix"),
+    )),
+  );
+  const slotBody = el("tbody", {});
+  // One row per (round, pickInRound) slot that exists in the data, aggregating
+  // every year. Picks-per-round = league size, so 10- and 12-team both work.
+  const maxPickByRound = {};
+  state.picks.forEach(p => {
+    if (!p.round || !p.pickInRound) return;
+    maxPickByRound[p.round] = Math.max(maxPickByRound[p.round] || 0, p.pickInRound);
+  });
+  [1, 2, 3].forEach(rd => {
+    const maxPick = maxPickByRound[rd];
+    if (!maxPick) return;
+    for (let pir = 1; pir <= maxPick; pir++) {
+      const slotPicks = state.picks.filter(p => p.round === rd && p.pickInRound === pir);
+      if (!slotPicks.length) continue;
+      const t = tally(slotPicks);
+      const slot = rd + "." + String(pir).padStart(2, "0");
+      slotBody.appendChild(el("tr", {
+        class: "row-clickable",
+        onclick: () => showPicksModal("Pick " + slot, slotPicks),
+      },
+        el("td", {}, slot),
+        el("td", { class: "num" }, String(t.total)),
+        el("td", { class: "num tight" }, String(t.hit)),
+        el("td", { class: "num tight" }, String(t.meh)),
+        el("td", { class: "num tight" }, String(t.miss)),
+        el("td", { class: "num tight gap-left" }, formatPct(t.hit, t.graded)),
+        el("td", { class: "num tight" }, formatPct(t.hit + t.meh, t.graded)),
+        el("td", { class: "mobile-hide" }, renderBar(t)),
+      ));
+    }
+  });
+  slotTable.appendChild(slotBody);
+  slotCard.appendChild(slotTable);
+  slotCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Each row is one exact pick slot across every draft year. Click a row to see every player taken there, oldest first."));
+  main.appendChild(slotCard);
 
   // ----- Card: Position × Section grid (where each position pays off) -----
   const psCard = el("div", { class: "card" }, el("h2", {}, "Best Position per Section"));
