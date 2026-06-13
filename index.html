@@ -2689,45 +2689,37 @@ function renderRosters() {
     assetsForRoster(r.roster_id).forEach(a => leaguePool.push(Object.assign({ owner }, a)));
   });
 
-  // Lede summarizes the top tiers and the bottom tiers so the wall of 12 isn't
-  // overwhelming. Each band is clickable to see every player in it league-wide.
-  const BANDS = [
-    { label: "elite / foundational", tiers: ["Cornerstone", "Foundational", "Upside Premier", "Mainstay"] },
-    { label: "producers / upside", tiers: ["Productive Vet", "Short Term League Winner", "Upside Shot", "Short Term Production"] },
-    { label: "bench / jag", tiers: ["Serviceable", "Jag - Insurance", "Jag - Developmental", "Replaceable"] },
-  ];
+  // League-wide total per individual tier, for the "N of TOTAL" breakdown.
+  const leagueTierTotals = {};
+  TIER_ORDER.forEach(t => { leagueTierTotals[t] = 0; });
+  leaguePool.forEach(a => { if (a.tier && leagueTierTotals[a.tier.label] != null) leagueTierTotals[a.tier.label]++; });
+
+  // Lede: each of the 12 categories the league has, showing this roster's count
+  // out of the league-wide total. Each is clickable to see everyone in it.
   const lede = el("div", { class: "card-lede" });
-  BANDS.forEach((band, i) => {
-    const tierSet = new Set(band.tiers);
-    const mine = band.tiers.reduce((s, t) => s + counts[t], 0);
-    const total = leaguePool.filter(a => a.tier && tierSet.has(a.tier.label)).length;
-    if (i > 0) lede.appendChild(el("span", {}, "  ·  "));
+  let firstTier = true;
+  TIER_ORDER.forEach(tier => {
+    const total = leagueTierTotals[tier];
+    if (!total) return;  // category nobody in the league has
+    if (!firstTier) lede.appendChild(el("span", {}, "  ·  "));
+    firstTier = false;
     lede.appendChild(el("span", {
       class: "lede-link",
-      title: "See all " + band.label + " players in the league",
-      onclick: () => showCategoryModal(band, tierSet),
-    }, el("strong", {}, String(mine)), " of " + total + " " + band.label));
+      title: "See all " + tier + " players in the league",
+      onclick: () => showCategoryModal(tier),
+    }, tier + " ", el("strong", {}, String(counts[tier])), " of " + total));
   });
   rosterCard.appendChild(lede);
 
-  // Modal: every league-wide asset in the band, grouped by tier (best first),
-  // each row showing the player, value, and owner. The selected roster's own
+  // Modal: every league-wide player in a single tier, best value first, each
+  // row showing the player, value, and owner. The selected roster's own
   // players are highlighted.
-  function showCategoryModal(band, tierSet) {
-    const inBand = leaguePool
-      .filter(a => a.tier && tierSet.has(a.tier.label))
-      .sort((a, b) => {
-        const ti = TIER_ORDER.indexOf(a.tier.label) - TIER_ORDER.indexOf(b.tier.label);
-        return ti !== 0 ? ti : (b.value || 0) - (a.value || 0);
-      });
+  function showCategoryModal(tier) {
+    const inTier = leaguePool
+      .filter(a => a.tier && a.tier.label === tier)
+      .sort((a, b) => (b.value || 0) - (a.value || 0));
     const body = el("div", {});
-    let lastTier = null;
-    inBand.forEach(a => {
-      if (a.tier.label !== lastTier) {
-        lastTier = a.tier.label;
-        const n = inBand.filter(x => x.tier.label === lastTier).length;
-        body.appendChild(el("div", { class: "round-header" }, lastTier + " (" + n + ")"));
-      }
+    inTier.forEach(a => {
       const nameLine = el("div", { style: "display:flex;align-items:center;gap:8px;flex:1;min-width:0" },
         el("span", { class: "mr-name" }, a.name),
       );
@@ -2740,8 +2732,8 @@ function renderRosters() {
         el("span", { class: "mr-owner" }, a.owner),
       ));
     });
-    if (!inBand.length) body.appendChild(el("div", { class: "empty" }, "No players in this category."));
-    openModal(band.label.replace(/\b\w/g, c => c.toUpperCase()) + " — " + inBand.length + " players", body);
+    if (!inTier.length) body.appendChild(el("div", { class: "empty" }, "No players in this category."));
+    openModal(tier + " — " + inTier.length + " league-wide", body);
   }
   TIER_ORDER.forEach(tier => {
     const tierAssets = myAssets.filter(a => a.tier.label === tier).sort((a, b) => b.value - a.value);
