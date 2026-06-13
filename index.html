@@ -237,6 +237,28 @@
   .result-meh { background: var(--meh-bg); color: var(--meh); }
   .result-miss { background: var(--miss-bg); color: var(--miss); }
   .result-pending { background: var(--pending-bg); color: var(--pending); }
+
+  /* Clickable hit-rate rows/cells → drill into the underlying picks */
+  tr.row-clickable { cursor: pointer; }
+  td.cell-clickable { cursor: pointer; }
+  td.cell-clickable:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+
+  /* "Every pick" strip: one colored cell per pick, by year */
+  .pick-strip-year { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .pick-strip-label { width: 44px; flex-shrink: 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .pick-strip { display: flex; flex-wrap: wrap; gap: 3px; }
+  .pick-cell {
+    width: 16px; height: 16px; border-radius: 3px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .pick-cell:hover { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .pc-hit { background: var(--hit); }
+  .pc-meh { background: var(--meh); }
+  .pc-miss { background: var(--miss); }
+  .pc-pending { background: var(--pending); }
+  .strip-legend { display: flex; gap: 14px; margin-top: 10px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .strip-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .strip-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -3680,9 +3702,83 @@ function renderAllPlayers() {
   main.appendChild(listCard);
 }
 
+// Result chip color for the "every pick" strip cells.
+function pickCellClass(result) {
+  if (result === "Hit") return "pc-hit";
+  if (result === "Meh") return "pc-meh";
+  if (result === "Miss") return "pc-miss";
+  return "pc-pending";
+}
+
+// Drill-down modal: every pick in a group (a row/cell of any hit-rate table),
+// listed in order of draft year, then draft slot. Shows slot, player,
+// position, drafter, and result.
+function showPicksModal(title, picks) {
+  const sorted = picks.slice().sort((a, b) =>
+    (a.year - b.year) || (a.round - b.round) || ((a.pickInRound || 0) - (b.pickInRound || 0)));
+  const body = el("div", {});
+  if (!sorted.length) {
+    body.appendChild(el("div", { class: "empty" }, "No picks in this group."));
+    openModal(title, body);
+    return;
+  }
+  let lastYear = null;
+  sorted.forEach(p => {
+    if (p.year !== lastYear) {
+      lastYear = p.year;
+      body.appendChild(el("div", { class: "round-header" }, String(p.year)));
+    }
+    const nameLine = el("div", { style: "display:flex;align-items:center;gap:8px;flex:1;min-width:0" },
+      el("span", { class: "mr-val", style: "min-width:34px" }, p.slot || "—"),
+      el("span", { class: "mr-name" }, p.player || el("span", { class: "pct" }, "(empty)")),
+    );
+    if (p.pos) nameLine.appendChild(el("span", { class: "pos-chip " + positionClass(p.pos) }, p.pos));
+    body.appendChild(el("div", { class: "modal-row" },
+      nameLine,
+      el("span", { class: "pick-result " + resultClass(p.result), style: "flex:0 0 auto" }, p.result || "Pending"),
+      el("span", { class: "mr-owner" }, p.person || "—"),
+    ));
+  });
+  const graded = sorted.filter(p => p.result).length;
+  const hits = sorted.filter(p => p.result === "Hit").length;
+  const sub = graded ? "  ·  " + ((hits / graded) * 100).toFixed(0) + "% hit" : "";
+  openModal(title + " — " + sorted.length + " picks" + sub, body);
+}
+
 function renderStats() {
   const main = document.getElementById("main");
   main.innerHTML = "";
+
+  // ----- Every pick made (visual strip, colored by result) -----
+  main.appendChild(el("div", { class: "section-header" }, "Every Pick",
+    el("span", { class: "section-sub" }, "Each cell is one pick — click any to see who it was")));
+  const stripCard = el("div", { class: "card" }, el("h2", {}, "Every Pick Made"));
+  const stripYears = state.years.slice().sort((a, b) => b - a);  // newest first
+  stripYears.forEach(y => {
+    const yp = state.picks
+      .filter(p => p.year === y && p.player)
+      .sort((a, b) => (a.round - b.round) || ((a.pickInRound || 0) - (b.pickInRound || 0)));
+    if (!yp.length) return;
+    const strip = el("div", { class: "pick-strip" });
+    yp.forEach(p => {
+      strip.appendChild(el("div", {
+        class: "pick-cell " + pickCellClass(p.result),
+        title: `${p.slot || ""} ${p.player} — ${p.result || "Pending"} (${p.person})`,
+        onclick: () => showPicksModal(`${p.slot || ""} ${p.player}`, [p]),
+      }));
+    });
+    stripCard.appendChild(el("div", { class: "pick-strip-year" },
+      el("div", { class: "pick-strip-label" }, String(y)),
+      strip,
+    ));
+  });
+  stripCard.appendChild(el("div", { class: "strip-legend" },
+    el("span", {}, el("i", { class: "pc-hit" }), "Hit"),
+    el("span", {}, el("i", { class: "pc-meh" }), "Meh"),
+    el("span", {}, el("i", { class: "pc-miss" }), "Miss"),
+    el("span", {}, el("i", { class: "pc-pending" }), "Pending"),
+  ));
+  main.appendChild(stripCard);
 
   // ----- Year × Round matrix -----
   main.appendChild(el("div", { class: "section-header" }, "League Overview",
@@ -3700,23 +3796,31 @@ function renderStats() {
     )),
   );
   const mtbody = el("tbody", {});
+  // Clickable percentage cell: opens the picks behind that year+round.
+  function matrixCell(extraClass, pct, picks, title) {
+    return el("td", {
+      class: "num cell-clickable" + (extraClass ? " " + extraClass : ""),
+      onclick: () => showPicksModal(title, picks),
+    }, pct);
+  }
   state.years.forEach(y => {
     const yp = state.picks.filter(p => p.year === y);
-    const r1 = tally(yp.filter(p => p.round === 1));
-    const r2 = tally(yp.filter(p => p.round === 2));
-    const r3 = tally(yp.filter(p => p.round === 3));
+    const r1p = yp.filter(p => p.round === 1), r2p = yp.filter(p => p.round === 2), r3p = yp.filter(p => p.round === 3);
+    const r1 = tally(r1p), r2 = tally(r2p), r3 = tally(r3p);
     mtbody.appendChild(el("tr", {},
-      el("td", {}, String(y)),
-      el("td", { class: "num" }, formatPct(r1.hit, r1.graded)),
-      el("td", { class: "num" }, formatPct(r1.hit + r1.meh, r1.graded)),
-      el("td", { class: "num gap-left" }, formatPct(r2.hit, r2.graded)),
-      el("td", { class: "num" }, formatPct(r2.hit + r2.meh, r2.graded)),
-      el("td", { class: "num gap-left" }, formatPct(r3.hit, r3.graded)),
-      el("td", { class: "num" }, formatPct(r3.hit + r3.meh, r3.graded)),
+      el("td", { class: "cell-clickable", onclick: () => showPicksModal(y + " — all rounds", yp) }, String(y)),
+      matrixCell("", formatPct(r1.hit, r1.graded), r1p, y + " Round 1"),
+      matrixCell("", formatPct(r1.hit + r1.meh, r1.graded), r1p, y + " Round 1"),
+      matrixCell("gap-left", formatPct(r2.hit, r2.graded), r2p, y + " Round 2"),
+      matrixCell("", formatPct(r2.hit + r2.meh, r2.graded), r2p, y + " Round 2"),
+      matrixCell("gap-left", formatPct(r3.hit, r3.graded), r3p, y + " Round 3"),
+      matrixCell("", formatPct(r3.hit + r3.meh, r3.graded), r3p, y + " Round 3"),
     ));
   });
   matrixTable.appendChild(mtbody);
   matrixCard.appendChild(matrixTable);
+  matrixCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Tip: click any hit-rate cell or row in the cards below to see every pick in that group, ordered by draft year."));
   main.appendChild(matrixCard);
 
   // ----- Round tier breakdown (Early/Mid/Late within each round) -----
@@ -3745,7 +3849,7 @@ function renderStats() {
   [1, 2, 3].forEach(rd => {
     const roundPicks = state.picks.filter(p => p.round === rd);
     const rt = tally(roundPicks);
-    ttbody.appendChild(el("tr", { class: "pos-total" },
+    ttbody.appendChild(el("tr", { class: "pos-total row-clickable", onclick: () => showPicksModal("Round " + rd, roundPicks) },
       el("td", {}, "Round " + rd),
       el("td", { class: "num" }, String(rt.total)),
       el("td", { class: "num tight" }, String(rt.hit)),
@@ -3760,7 +3864,7 @@ function renderStats() {
       if (!sub.length) return;
       const t = tally(sub);
       const slotRange = tier === "Early" ? "1-4" : tier === "Mid" ? "5-8" : "9-12";
-      ttbody.appendChild(el("tr", { class: "pos-sub" },
+      ttbody.appendChild(el("tr", { class: "pos-sub row-clickable", onclick: () => showPicksModal(`${tier} Round ${rd} (${rd}.${slotRange})`, sub) },
         el("td", {}, `${tier} (${rd}.${slotRange})`),
         el("td", { class: "num" }, String(t.total)),
         el("td", { class: "num tight" }, String(t.hit)),
@@ -3813,7 +3917,7 @@ function renderStats() {
     ["QB", "RB", "WR", "TE"].forEach(pos => {
       const all = posPicks.filter(p => p.pos === pos);
       if (!all.length) return;
-      ptbody.appendChild(el("tr", { class: "pos-total" },
+      ptbody.appendChild(el("tr", { class: "pos-total row-clickable", onclick: () => showPicksModal(pos + " — all picks", all) },
         el("td", {},
           el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
           pos + " — Total"
@@ -3823,7 +3927,7 @@ function renderStats() {
       [1, 2, 3].forEach(rd => {
         const sub = all.filter(p => p.round === rd);
         if (!sub.length) return;
-        ptbody.appendChild(el("tr", { class: "pos-sub" },
+        ptbody.appendChild(el("tr", { class: "pos-sub row-clickable", onclick: () => showPicksModal(`${pos} — Round ${rd}`, sub) },
           el("td", {}, "Round " + rd),
           ...statCells(tally(sub)),
         ));
@@ -3831,7 +3935,7 @@ function renderStats() {
           const tierSub = sub.filter(p => tierOfPick(p.pickInRound) === tier);
           if (!tierSub.length) return;
           const slotRange = tier === "Early" ? "1-4" : tier === "Mid" ? "5-8" : "9-12";
-          ptbody.appendChild(el("tr", { class: "pos-tier" },
+          ptbody.appendChild(el("tr", { class: "pos-tier row-clickable", onclick: () => showPicksModal(`${pos} — ${tier} Round ${rd} (${rd}.${slotRange})`, tierSub) },
             el("td", {}, `${tier} (${rd}.${slotRange})`),
             ...statCells(tally(tierSub)),
           ));
@@ -3905,17 +4009,23 @@ function renderStats() {
       ? valid.reduce((a, b) => (b.metric > a.metric ? b : a)).pos
       : null;
     psBody.appendChild(el("tr", {},
-      el("td", {},
+      el("td", {
+        class: sectionPicks.length ? "cell-clickable" : "",
+        onclick: sectionPicks.length ? () => showPicksModal(section.label + " — all positions", sectionPicks) : undefined,
+      },
         section.label,
         el("span", { class: "pct", style: "margin-left:8px" }, section.slots)
       ),
       ...posData.map(d => {
         const isBest = d.pos === bestPos;
-        const cellClass = "num tight" + (isBest ? " cell-best" : "");
+        const subset = sectionPicks.filter(p => p.pos === d.pos);
+        const clickable = subset.length > 0;
+        const cellClass = "num tight" + (isBest ? " cell-best" : "") + (clickable ? " cell-clickable" : "");
+        const onclick = clickable ? () => showPicksModal(`${section.label} — ${d.pos}`, subset) : undefined;
         if (d.metric === null) {
-          return el("td", { class: cellClass + " pct" }, "—");
+          return el("td", { class: cellClass + " pct", onclick }, d.t.total ? "—" : "—");
         }
-        return el("td", { class: cellClass },
+        return el("td", { class: cellClass, onclick },
           psMetricFormat(d.t),
           el("span", { class: "pct", style: "margin-left:4px" }, "(" + d.t.total + ")"),
         );
@@ -3957,22 +4067,19 @@ function renderStats() {
       )),
     );
     const itbody = el("tbody", {});
-    function cellFor(picks) {
+    function cellFor(picks, title, gap) {
+      const base = "num tight" + (gap ? " gap-left" : "");
       const t = tally(picks);
-      if (!t.graded) return el("td", { class: "num tight" }, "—");
-      return el("td", { class: "num tight" },
+      if (!t.graded) return el("td", { class: base }, "—");
+      return el("td", {
+        class: base + " cell-clickable",
+        onclick: () => showPicksModal(state.statsInsightDrafter + " — " + title, picks),
+      },
         formatPct(t.hit, t.graded),
         el("span", { class: "pct", style: "margin-left:6px" }, "(" + t.total + ")"),
       );
     }
-    function cellForGap(picks) {
-      const t = tally(picks);
-      if (!t.graded) return el("td", { class: "num tight gap-left" }, "—");
-      return el("td", { class: "num tight gap-left" },
-        formatPct(t.hit, t.graded),
-        el("span", { class: "pct", style: "margin-left:6px" }, "(" + t.total + ")"),
-      );
-    }
+    function cellForGap(picks, title) { return cellFor(picks, title, true); }
     ["QB", "RB", "WR", "TE"].forEach(pos => {
       const posPicks = drafterPicks.filter(p => p.pos === pos);
       if (!posPicks.length) return;
@@ -3982,10 +4089,10 @@ function renderStats() {
           el("span", { class: "swatch", style: "background:" + POSITION_COLORS[pos] }),
           pos + " — Total"
         ),
-        cellFor(posPicks.filter(p => p.round === 1)),
-        cellFor(posPicks.filter(p => p.round === 2)),
-        cellFor(posPicks.filter(p => p.round === 3)),
-        cellForGap(posPicks),
+        cellFor(posPicks.filter(p => p.round === 1), pos + " Round 1"),
+        cellFor(posPicks.filter(p => p.round === 2), pos + " Round 2"),
+        cellFor(posPicks.filter(p => p.round === 3), pos + " Round 3"),
+        cellForGap(posPicks, pos + " all rounds"),
       ));
       // For each round, nest Early / Mid / Late sub-rows underneath.
       [1, 2, 3].forEach(rd => {
@@ -3997,12 +4104,13 @@ function renderStats() {
           const slotRange = tier === "Early" ? "1-4" : tier === "Mid" ? "5-8" : "9-12";
           // Cells: this tier slot only fills under its own round column; the
           // other two round columns get a dash so the grid still reads cleanly.
+          const cellTitle = `${pos} ${tier} Round ${rd} (${rd}.${slotRange})`;
           itbody.appendChild(el("tr", { class: "pos-tier" },
             el("td", {}, `R${rd} ${tier} (${rd}.${slotRange})`),
-            rd === 1 ? cellFor(tierPicks) : el("td", { class: "num tight" }, "—"),
-            rd === 2 ? cellFor(tierPicks) : el("td", { class: "num tight" }, "—"),
-            rd === 3 ? cellFor(tierPicks) : el("td", { class: "num tight" }, "—"),
-            cellForGap(tierPicks),
+            rd === 1 ? cellFor(tierPicks, cellTitle) : el("td", { class: "num tight" }, "—"),
+            rd === 2 ? cellFor(tierPicks, cellTitle) : el("td", { class: "num tight" }, "—"),
+            rd === 3 ? cellFor(tierPicks, cellTitle) : el("td", { class: "num tight" }, "—"),
+            cellForGap(tierPicks, cellTitle),
           ));
         });
       });
@@ -4066,7 +4174,7 @@ function renderStats() {
     const delta = score - overallScore;
     const label = delta >= 0.033 ? "Strong" : delta <= -0.033 ? "Weak" : "Average";
     const pillClass = delta >= 0.033 ? "pill pill-strong" : delta <= -0.033 ? "pill pill-weak" : "pill pill-avg";
-    ysBody.appendChild(el("tr", {},
+    ysBody.appendChild(el("tr", { class: "row-clickable", onclick: () => showPicksModal(y + " — all picks", yp) },
       el("td", {}, String(y)),
       el("td", { class: "num" }, String(t.total)),
       el("td", { class: "num tight" }, formatPct(t.hit, t.graded)),
