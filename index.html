@@ -742,6 +742,73 @@
     color: var(--text);
   }
   .card-lede strong { color: var(--accent); }
+  .lede-link {
+    cursor: pointer;
+    border-bottom: 1px dashed transparent;
+    transition: border-color 0.15s;
+  }
+  .lede-link:hover { border-bottom-color: var(--accent); }
+  .lede-link:hover strong { text-decoration: underline; }
+
+  /* Lightweight modal for the category breakdown */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 16px;
+    z-index: 1000;
+    overflow-y: auto;
+  }
+  .modal-box {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    width: 100%;
+    max-width: 640px;
+    max-height: calc(100vh - 96px);
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--panel);
+    border-radius: 10px 10px 0 0;
+  }
+  .modal-head h3 { margin: 0; font-size: 16px; }
+  .modal-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 8px 20px 20px; overflow-y: auto; }
+  .modal-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+  }
+  .modal-row:last-child { border-bottom: none; }
+  .modal-row.is-mine { background: rgba(88, 166, 255, 0.08); margin: 0 -20px; padding-left: 20px; padding-right: 20px; }
+  .modal-row .mr-name { font-weight: 600; }
+  .modal-row .mr-owner { margin-left: auto; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .modal-row .mr-val { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
   .pill {
     display: inline-block;
@@ -1487,6 +1554,26 @@ function el(tag, attrs = {}, ...children) {
     e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
   });
   return e;
+}
+
+// Lightweight modal. Pass a title string and a content node; closes on the X,
+// the backdrop, or Escape.
+function openModal(title, contentNode) {
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  const box = el("div", { class: "modal-box" },
+    el("div", { class: "modal-head" },
+      el("h3", {}, title),
+      el("button", { class: "modal-close", onclick: close, title: "Close" }, "×"),
+    ),
+    el("div", { class: "modal-body" }, contentNode),
+  );
+  const overlay = el("div", { class: "modal-overlay", onclick: e => { if (e.target === overlay) close(); } }, box);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(overlay);
 }
 
 function customSelect(options, currentValue, onChange) {
@@ -2591,15 +2678,71 @@ function renderRosters() {
   const counts = {};
   TIER_ORDER.forEach(t => { counts[t] = 0; });
   myAssets.forEach(a => { if (a.tier && counts[a.tier.label] != null) counts[a.tier.label]++; });
-  // Lede summarizes the top tiers and the bottom tiers so the wall of 12 isn't overwhelming.
-  const topCount = ["Cornerstone","Foundational","Upside Premier","Mainstay"].reduce((s,t)=>s+counts[t],0);
-  const midCount = ["Productive Vet","Short Term League Winner","Upside Shot","Short Term Production"].reduce((s,t)=>s+counts[t],0);
-  const lowCount = ["Serviceable","Jag - Insurance","Jag - Developmental","Replaceable"].reduce((s,t)=>s+counts[t],0);
+
+  // League-wide asset pool (every roster's players + picks) with owners, so the
+  // lede can show "N of TOTAL" and the breakdown modal can list every player in
+  // a category and who owns them.
+  const leaguePool = [];
+  latestSeason.rosters.forEach(r => {
+    const u = latestSeason.users.find(x => x.user_id === r.owner_id);
+    const owner = u ? canonicalOwnerName(userDisplay(u)) : "—";
+    assetsForRoster(r.roster_id).forEach(a => leaguePool.push(Object.assign({ owner }, a)));
+  });
+
+  // Lede summarizes the top tiers and the bottom tiers so the wall of 12 isn't
+  // overwhelming. Each band is clickable to see every player in it league-wide.
+  const BANDS = [
+    { label: "elite / foundational", tiers: ["Cornerstone", "Foundational", "Upside Premier", "Mainstay"] },
+    { label: "producers / upside", tiers: ["Productive Vet", "Short Term League Winner", "Upside Shot", "Short Term Production"] },
+    { label: "bench / jag", tiers: ["Serviceable", "Jag - Insurance", "Jag - Developmental", "Replaceable"] },
+  ];
   const lede = el("div", { class: "card-lede" });
-  lede.innerHTML = `<strong>${topCount}</strong> elite / foundational  ·  ` +
-    `<strong>${midCount}</strong> producers / upside  ·  ` +
-    `<strong>${lowCount}</strong> bench / jag`;
+  BANDS.forEach((band, i) => {
+    const tierSet = new Set(band.tiers);
+    const mine = band.tiers.reduce((s, t) => s + counts[t], 0);
+    const total = leaguePool.filter(a => a.tier && tierSet.has(a.tier.label)).length;
+    if (i > 0) lede.appendChild(el("span", {}, "  ·  "));
+    lede.appendChild(el("span", {
+      class: "lede-link",
+      title: "See all " + band.label + " players in the league",
+      onclick: () => showCategoryModal(band, tierSet),
+    }, el("strong", {}, String(mine)), " of " + total + " " + band.label));
+  });
   rosterCard.appendChild(lede);
+
+  // Modal: every league-wide asset in the band, grouped by tier (best first),
+  // each row showing the player, value, and owner. The selected roster's own
+  // players are highlighted.
+  function showCategoryModal(band, tierSet) {
+    const inBand = leaguePool
+      .filter(a => a.tier && tierSet.has(a.tier.label))
+      .sort((a, b) => {
+        const ti = TIER_ORDER.indexOf(a.tier.label) - TIER_ORDER.indexOf(b.tier.label);
+        return ti !== 0 ? ti : (b.value || 0) - (a.value || 0);
+      });
+    const body = el("div", {});
+    let lastTier = null;
+    inBand.forEach(a => {
+      if (a.tier.label !== lastTier) {
+        lastTier = a.tier.label;
+        const n = inBand.filter(x => x.tier.label === lastTier).length;
+        body.appendChild(el("div", { class: "round-header" }, lastTier + " (" + n + ")"));
+      }
+      const nameLine = el("div", { style: "display:flex;align-items:center;gap:8px;flex:1;min-width:0" },
+        el("span", { class: "mr-name" }, a.name),
+      );
+      if (a.position && a.position !== "PICK") {
+        nameLine.appendChild(el("span", { class: "pos-chip " + positionClass(a.position) }, a.position));
+      }
+      if (a.ktc) nameLine.appendChild(el("span", { class: "mr-val" }, "KTC " + a.ktc.toLocaleString()));
+      body.appendChild(el("div", { class: "modal-row" + (a.owner === selectedName ? " is-mine" : "") },
+        nameLine,
+        el("span", { class: "mr-owner" }, a.owner),
+      ));
+    });
+    if (!inBand.length) body.appendChild(el("div", { class: "empty" }, "No players in this category."));
+    openModal(band.label.replace(/\b\w/g, c => c.toUpperCase()) + " — " + inBand.length + " players", body);
+  }
   TIER_ORDER.forEach(tier => {
     const tierAssets = myAssets.filter(a => a.tier.label === tier).sort((a, b) => b.value - a.value);
     if (!tierAssets.length) return;
