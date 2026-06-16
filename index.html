@@ -44,6 +44,13 @@
     background: var(--panel);
     border-bottom: 1px solid var(--border);
     padding: 16px 24px;
+    /* When launched from the home screen (standalone), the page draws under
+       the status bar / notch, so pad by the safe-area insets to keep the title
+       clear. These are 0 in a normal browser, where the chrome already covers
+       that space. */
+    padding-top: calc(16px + env(safe-area-inset-top, 0px));
+    padding-left: calc(24px + env(safe-area-inset-left, 0px));
+    padding-right: calc(24px + env(safe-area-inset-right, 0px));
     position: sticky;
     top: 0;
     z-index: 10;
@@ -1272,7 +1279,12 @@
 
   /* ---------- Mobile ---------- */
   @media (max-width: 640px) {
-    header { padding: 10px 14px; }
+    header {
+      padding: 10px 14px;
+      padding-top: calc(10px + env(safe-area-inset-top, 0px));
+      padding-left: calc(14px + env(safe-area-inset-left, 0px));
+      padding-right: calc(14px + env(safe-area-inset-right, 0px));
+    }
     h1 { font-size: 17px; }
     .header-row { gap: 10px; }
     .status { font-size: 12px; gap: 6px; }
