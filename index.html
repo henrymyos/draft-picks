@@ -5060,15 +5060,22 @@ function snapshotForTradeTime(history, tradeMs) {
 }
 
 // Average of the available Early/Mid/Late tiers for a {season, round} pick.
+// KTC's data doesn't carry the earliest seasons (e.g. 2020 picks have no
+// value), so when a season is missing we fall forward to the next season's
+// same-round value as a proxy (2020 picks → 2021 picks).
 function avgPickValueFromMap(picksMap, season, round) {
   if (!picksMap) return null;
   const tiers = ["early", "mid", "late"];
-  let total = 0, count = 0;
-  tiers.forEach(t => {
-    const v = picksMap[`${season}|${t}|${round}`];
-    if (v && v > 0) { total += v; count++; }
-  });
-  return count > 0 ? total / count : null;
+  const base = parseInt(season, 10);
+  for (let s = base; s <= base + 2; s++) {
+    let total = 0, count = 0;
+    tiers.forEach(t => {
+      const v = picksMap[`${s}|${t}|${round}`];
+      if (v && v > 0) { total += v; count++; }
+    });
+    if (count > 0) return total / count;
+  }
+  return null;
 }
 function lookupPickValue(snap, season, round) {
   return snap ? avgPickValueFromMap(snap.picks, season, round) : null;
