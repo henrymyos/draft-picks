@@ -5483,6 +5483,20 @@ function renderTrades() {
     }
     block.appendChild(header);
 
+    // Per-asset KTC values, from the same valuation used for the swing tag.
+    const valByPlayer = {}, valByPick = {};
+    if (evalResult) {
+      [...evalResult.gotDetail, ...evalResult.sentDetail].forEach(d => {
+        if (d.kind === "player") valByPlayer[d.pid] = d.value;
+        else valByPick[d.dp.season + "|" + d.dp.round + "|" + d.dp.roster_id] = d.value;
+      });
+    }
+    const withValue = (node, value) => {
+      node.appendChild(el("span", { class: "trade-where" },
+        value ? "KTC " + Math.round(value).toLocaleString() : "—"));
+      return node;
+    };
+
     const cols = el("div", { class: "trade-cols" });
     const received = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, "Received"));
     const sent = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, "Sent"));
@@ -5490,20 +5504,21 @@ function renderTrades() {
     // Players
     Object.entries(trade.adds).forEach(([pid, rid]) => {
       if (rid !== myRosterId) return;
-      received.appendChild(renderTradePlayerLine(pid, players));
+      received.appendChild(withValue(renderTradePlayerLine(pid, players), valByPlayer[pid]));
     });
     Object.entries(trade.drops).forEach(([pid, rid]) => {
       if (rid !== myRosterId) return;
-      sent.appendChild(renderTradePlayerLine(pid, players));
+      sent.appendChild(withValue(renderTradePlayerLine(pid, players), valByPlayer[pid]));
     });
 
     // Picks
     trade.draft_picks.forEach(dp => {
+      const pv = valByPick[dp.season + "|" + dp.round + "|" + dp.roster_id];
       if (dp.owner_id === myRosterId) {
-        received.appendChild(renderTradePickLine(dp, seasons, players, trade.created));
+        received.appendChild(withValue(renderTradePickLine(dp, seasons, players, trade.created), pv));
       }
       if (dp.previous_owner_id === myRosterId) {
-        sent.appendChild(renderTradePickLine(dp, seasons, players, trade.created));
+        sent.appendChild(withValue(renderTradePickLine(dp, seasons, players, trade.created), pv));
       }
     });
 
