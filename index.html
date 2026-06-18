@@ -5060,22 +5060,25 @@ function snapshotForTradeTime(history, tradeMs) {
 }
 
 // Average of the available Early/Mid/Late tiers for a {season, round} pick.
-// KTC's data doesn't carry the earliest seasons (e.g. 2020 picks have no
-// value), so when a season is missing we fall forward to the next season's
-// same-round value as a proxy (2020 picks → 2021 picks).
 function avgPickValueFromMap(picksMap, season, round) {
   if (!picksMap) return null;
   const tiers = ["early", "mid", "late"];
-  const base = parseInt(season, 10);
-  for (let s = base; s <= base + 2; s++) {
-    let total = 0, count = 0;
-    tiers.forEach(t => {
-      const v = picksMap[`${s}|${t}|${round}`];
-      if (v && v > 0) { total += v; count++; }
-    });
-    if (count > 0) return total / count;
-  }
-  return null;
+  let total = 0, count = 0;
+  tiers.forEach(t => {
+    const v = picksMap[`${season}|${t}|${round}`];
+    if (v && v > 0) { total += v; count++; }
+  });
+  return count > 0 ? total / count : null;
+}
+
+// KTC carries no 2020 pick values, so price 2020 picks by copying the 2021
+// snapshot's same-round value. Finds the first 2021 snapshot that actually
+// lists 2021 picks.
+function snapshot2021Picks(history) {
+  const snaps = (history && history.snapshots) || [];
+  const s = snaps.find(x => x.label && x.label.startsWith("2021") && x.picks
+    && Object.keys(x.picks).some(k => k.startsWith("2021|")));
+  return s ? s.picks : null;
 }
 function lookupPickValue(snap, season, round) {
   return snap ? avgPickValueFromMap(snap.picks, season, round) : null;
@@ -5179,8 +5182,15 @@ function evaluateTrade(trade, myRosterId, history, sleeperPlayers) {
   } else {
     const snap = snapshotForTradeTime(history, trade.created);
     if (!snap) return null;
+    const picks2021 = snapshot2021Picks(history);
     priceName = n => snap.players[ktcNormalizeName(n)] || 0;
-    pricePick = dp => lookupPickValue(snap, dp.season, dp.round) || 0;
+    pricePick = dp => {
+      // 2020 picks have no KTC value; copy the 2021 snapshot's same-round value.
+      if (parseInt(dp.season, 10) === 2020 && picks2021) {
+        return avgPickValueFromMap(picks2021, 2021, dp.round) || 0;
+      }
+      return lookupPickValue(snap, dp.season, dp.round) || 0;
+    };
     label = snap.label;
     priceSet = snap.players;
   }
