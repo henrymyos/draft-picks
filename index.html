@@ -5517,10 +5517,8 @@ function renderInsights() {
         if (!p || !p.position) return;
         const norm = ktcNormalizeName(p.name);
         const current = (dyn[norm] || {}).value || 0;
-        let peak = 0;
-        snaps.forEach(s => { const v = s.players[norm] || 0; if (v > peak) peak = v; });
         const prev = lastSnap.players[norm] || 0;
-        owned.push({ name: p.name, pos: p.position, owner, current, prev, peak, delta: (current && prev) ? current - prev : 0 });
+        owned.push({ name: p.name, pos: p.position, owner, current, prev, delta: (current && prev) ? current - prev : 0 });
       });
     });
     const moverRow = (o, text, cls) => el("div", { class: "trade-line" },
@@ -5545,21 +5543,6 @@ function renderInsights() {
         listCol("Fallers", fallers, o => moverRow(o, "−" + Math.round(-o.delta).toLocaleString(), "delta-neg")),
       ),
       el("div", { class: "pct", style: "margin-top:8px" }, "KTC change since " + lastSnap.label + ".")));
-
-    const buyLow = owned.filter(o => o.peak >= 3000 && o.current > 0 && o.current < o.peak * 0.8)
-      .sort((a, b) => (b.peak - b.current) - (a.peak - a.current)).slice(0, 8);
-    const sellHigh = owned.filter(o => o.current >= 4000 && o.peak > 0 && o.current >= o.peak && o.delta > 0)
-      .sort((a, b) => b.current - a.current).slice(0, 8);
-    main.appendChild(el("div", { class: "card" },
-      el("h2", {}, "Buy-Low / Sell-High"),
-      el("div", { class: "trade-cols" },
-        listCol("Buy-low (off their peak)", buyLow,
-          o => moverRow(o, "−" + Math.round(o.peak - o.current).toLocaleString() + " (now " + o.current.toLocaleString() + ")", "delta-neg")),
-        listCol("Sell-high (at a new high)", sellHigh,
-          o => moverRow(o, o.current.toLocaleString() + " ATH", "delta-pos")),
-      ),
-      el("div", { class: "pct", style: "margin-top:8px" },
-        "Buy-low = 20%+ below their historical KTC peak. Sell-high = at a new high and still rising.")));
   }
 
   // ===== Draft value: capital ROI + steals & busts (picks + current KTC) =====
@@ -5703,37 +5686,6 @@ function renderInsights() {
       el("div", { class: "pct", style: "margin-top:8px" },
         "Window from starting-lineup strength: Contender (top half), Middler, Reloader. " +
         "Starters = best-lineup KTC; Picks = projected future-pick capital; Age is value-weighted.")));
-
-    // Roster value over time: each CURRENT roster priced at past snapshots.
-    if (snaps.length) {
-      main.appendChild(el("div", { class: "section-header" }, "Roster Value Over Time",
-        el("span", { class: "section-sub" }, "Each team's current roster priced at past KTC snapshots (in thousands)")));
-      const teamRows = latest.rosters.map(r => {
-        const name = canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id)));
-        const norms = (r.players || []).map(pid => players[pid]).filter(Boolean).map(p => ktcNormalizeName(p.name));
-        const series = snaps.map(s => norms.reduce((sum, nm) => sum + (s.players[nm] || 0), 0));
-        const now = norms.reduce((sum, nm) => sum + ((dyn[nm] || {}).value || 0), 0);
-        return { name, series, now };
-      });
-      teamRows.sort((a, b) => b.now - a.now);
-      const table = el("table", { class: "hist-table" });
-      const head = el("tr", {}, el("th", {}, "Manager"));
-      snaps.forEach(s => head.appendChild(el("th", { class: "num" }, s.label.slice(2, 7))));
-      head.appendChild(el("th", { class: "num" }, "Now"));
-      table.appendChild(el("thead", {}, head));
-      const tb = el("tbody", {});
-      teamRows.forEach(t => {
-        const tr = el("tr", {}, el("th", {}, t.name));
-        t.series.forEach(v => tr.appendChild(el("td", { class: "num" }, v ? Math.round(v / 1000) + "k" : "—")));
-        tr.appendChild(el("td", { class: "num", style: "font-weight:600" }, Math.round(t.now / 1000) + "k"));
-        tb.appendChild(tr);
-      });
-      table.appendChild(tb);
-      main.appendChild(el("div", { class: "card" },
-        el("div", { style: "overflow-x:auto" }, table),
-        el("div", { class: "hist-note" },
-          "Each team's current roster priced at each snapshot — a trend of the core they hold now, not their roster at the time.")));
-    }
   }
 }
 
