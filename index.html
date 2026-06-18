@@ -5640,6 +5640,101 @@ function renderInsights() {
         "Each pick's ROI = the player's current KTC value minus the slot's typical cost. " +
         "Current value, so players who have since aged out show as busts.")));
   }
+
+  // ===== Team profiles / contention windows =====
+  main.appendChild(el("div", { class: "section-header" }, "Team Profiles",
+    el("span", { class: "section-sub" }, "Roster value, draft capital, age, and contention window")));
+  if (!haveValues) {
+    main.appendChild(el("div", { class: "card" }, el("div", { class: "empty" }, "Loading KTC values…")));
+  } else {
+    const ranked = computeManagerRankings() || [];
+    const dyn = state.ktcDynasty.players;
+    const ageByRid = {};
+    latest.rosters.forEach(r => {
+      let wsum = 0, asum = 0;
+      (r.players || []).forEach(pid => {
+        const p = players[pid];
+        if (!p || p.age == null) return;
+        const v = (dyn[ktcNormalizeName(p.name)] || {}).value || 0;
+        if (!v) return;
+        wsum += v; asum += v * p.age;
+      });
+      ageByRid[r.roster_id] = wsum ? asum / wsum : null;
+    });
+    const n = ranked.length;
+    const rrows = ranked.map(r => ({
+      name: r.name, type: classifyManager(r.cRank, n).label,
+      roster: r.playerValue, starters: r.optimalValue, picks: r.pickValue,
+      totalValue: r.totalValue, age: ageByRid[r.roster_id],
+    }));
+    if (!state.insightsTeamSort) state.insightsTeamSort = { col: "totalValue", dir: "desc" };
+    const ps = state.insightsTeamSort;
+    rrows.sort((a, b) => {
+      const av = a[ps.col] == null ? -Infinity : a[ps.col];
+      const bv = b[ps.col] == null ? -Infinity : b[ps.col];
+      const cmp = av < bv ? -1 : av > bv ? 1 : (a.name < b.name ? -1 : 1);
+      return ps.dir === "asc" ? cmp : -cmp;
+    });
+    const pill = t => el("span", { class: "pill " + (t === "Contender" ? "pill-strong" : t === "Reloader" ? "pill-weak" : "pill-avg") }, t);
+    const tt = el("table", {},
+      el("thead", {}, el("tr", {},
+        sortHeader("Manager", "name", ps, () => { toggleSort(ps, "name"); render(); }, "", ""),
+        el("th", {}, "Window"),
+        sortHeader("Roster", "roster", ps, () => { toggleSort(ps, "roster"); render(); }),
+        sortHeader("Starters", "starters", ps, () => { toggleSort(ps, "starters"); render(); }),
+        sortHeader("Picks", "picks", ps, () => { toggleSort(ps, "picks"); render(); }),
+        sortHeader("Total", "totalValue", ps, () => { toggleSort(ps, "totalValue"); render(); }),
+        sortHeader("Age", "age", ps, () => { toggleSort(ps, "age"); render(); }),
+      )));
+    const ttb = el("tbody", {});
+    rrows.forEach(r => ttb.appendChild(el("tr", {},
+      el("td", {}, r.name),
+      el("td", {}, pill(r.type)),
+      el("td", { class: "num" }, Math.round(r.roster).toLocaleString()),
+      el("td", { class: "num" }, Math.round(r.starters).toLocaleString()),
+      el("td", { class: "num" }, Math.round(r.picks).toLocaleString()),
+      el("td", { class: "num" }, Math.round(r.totalValue).toLocaleString()),
+      el("td", { class: "num" }, r.age != null ? r.age.toFixed(1) : "—"),
+    )));
+    tt.appendChild(ttb);
+    main.appendChild(el("div", { class: "card" },
+      el("h2", {}, "Team Profiles"),
+      el("div", { style: "overflow-x:auto" }, tt),
+      el("div", { class: "pct", style: "margin-top:8px" },
+        "Window from starting-lineup strength: Contender (top half), Middler, Reloader. " +
+        "Starters = best-lineup KTC; Picks = projected future-pick capital; Age is value-weighted.")));
+
+    // Roster value over time: each CURRENT roster priced at past snapshots.
+    if (snaps.length) {
+      main.appendChild(el("div", { class: "section-header" }, "Roster Value Over Time",
+        el("span", { class: "section-sub" }, "Each team's current roster priced at past KTC snapshots (in thousands)")));
+      const teamRows = latest.rosters.map(r => {
+        const name = canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id)));
+        const norms = (r.players || []).map(pid => players[pid]).filter(Boolean).map(p => ktcNormalizeName(p.name));
+        const series = snaps.map(s => norms.reduce((sum, nm) => sum + (s.players[nm] || 0), 0));
+        const now = norms.reduce((sum, nm) => sum + ((dyn[nm] || {}).value || 0), 0);
+        return { name, series, now };
+      });
+      teamRows.sort((a, b) => b.now - a.now);
+      const table = el("table", { class: "hist-table" });
+      const head = el("tr", {}, el("th", {}, "Manager"));
+      snaps.forEach(s => head.appendChild(el("th", { class: "num" }, s.label.slice(2, 7))));
+      head.appendChild(el("th", { class: "num" }, "Now"));
+      table.appendChild(el("thead", {}, head));
+      const tb = el("tbody", {});
+      teamRows.forEach(t => {
+        const tr = el("tr", {}, el("th", {}, t.name));
+        t.series.forEach(v => tr.appendChild(el("td", { class: "num" }, v ? Math.round(v / 1000) + "k" : "—")));
+        tr.appendChild(el("td", { class: "num", style: "font-weight:600" }, Math.round(t.now / 1000) + "k"));
+        tb.appendChild(tr);
+      });
+      table.appendChild(tb);
+      main.appendChild(el("div", { class: "card" },
+        el("div", { style: "overflow-x:auto" }, table),
+        el("div", { class: "hist-note" },
+          "Each team's current roster priced at each snapshot — a trend of the core they hold now, not their roster at the time.")));
+    }
+  }
 }
 
 function renderTrades() {
