@@ -5385,6 +5385,40 @@ function positionClass(pos) {
   }
 }
 
+// Resolve a loosely-typed player name (e.g. the sheet's "Ken Walker" or
+// "TET McMillan") to its canonical KTC key. Exact normalized match first, then
+// last name + first initial (+ position) so nicknames/short forms still join
+// to KTC's formal names ("Kenneth Walker III", "Tetairoa McMillan"). The key it
+// returns is shared by current values and the history snapshots. Null = no match.
+function makeKtcNameResolver(dynPlayers) {
+  const exact = new Set();
+  const lip = {}, li = {}, lp = {};
+  const add = (map, k, rec) => { (map[k] || (map[k] = [])).push(rec); };
+  Object.entries(dynPlayers || {}).forEach(([key, e]) => {
+    if (!key) return;
+    const parts = key.split(" ");
+    const last = parts[parts.length - 1];
+    const initial = parts[0] ? parts[0][0] : "";
+    const pos = (e && e.position) || "";
+    const rec = { key, value: (e && e.value) || 0 };
+    exact.add(key);
+    add(lip, last + "|" + initial + "|" + pos, rec);
+    add(li, last + "|" + initial, rec);
+    add(lp, last + "|" + pos, rec);
+  });
+  const best = arr => (arr && arr.length) ? arr.reduce((a, b) => (b.value > a.value ? b : a)).key : null;
+  return (name, pos) => {
+    const norm = ktcNormalizeName(name);
+    if (exact.has(norm)) return norm;
+    const parts = norm.split(" ");
+    if (parts.length < 2) return null;
+    const last = parts[parts.length - 1];
+    const initial = parts[0][0];
+    const p = pos || "";
+    return best(lip[last + "|" + initial + "|" + p]) || best(lp[last + "|" + p]) || best(li[last + "|" + initial]) || null;
+  };
+}
+
 // ---------- Insights: league-wide analytics ----------
 function renderInsights() {
   const main = document.getElementById("main");
@@ -5559,20 +5593,22 @@ function renderInsights() {
     // Judge each pick by what the player became 3 years after the draft (a
     // fair, era-consistent window for a prospect to develop) — using the KTC
     // snapshot nearest that date. Picks less than 3 years old use current value.
-    const valueAtHorizon = (playerName, draftYear) => {
-      const norm = ktcNormalizeName(playerName);
-      if (!draftYear || draftYear + 3 >= nowYear || !snaps.length) return (dyn[norm] || {}).value || 0;
+    const resolveKtc = makeKtcNameResolver(dyn);
+    const valueAtHorizon = (playerName, draftYear, pos) => {
+      const key = resolveKtc(playerName, pos);
+      if (!key) return 0;
+      if (!draftYear || draftYear + 3 >= nowYear || !snaps.length) return (dyn[key] || {}).value || 0;
       const targetMs = Date.UTC(draftYear + 3, 5, 1);  // ≈ June of draftYear+3
       let best = null, bestDiff = Infinity;
       snaps.forEach(s => { const d = Math.abs(s.timestamp_ms - targetMs); if (d < bestDiff) { bestDiff = d; best = s; } });
-      return best ? (best.players[norm] || 0) : ((dyn[norm] || {}).value || 0);
+      return best ? (best.players[key] || 0) : ((dyn[key] || {}).value || 0);
     };
     const byMgr = {};
     const pickRows = [];
     state.picks.forEach(pk => {
       if (!pk.player || !pk.person) return;
       const settled = pk.year && (pk.year + 3 < nowYear);
-      const value = valueAtHorizon(pk.player, pk.year);
+      const value = valueAtHorizon(pk.player, pk.year, pk.pos);
       const cost = autoSlotExpectation(pk.round, pk.pickInRound || 1, nTeams);
       const m = byMgr[pk.person] || (byMgr[pk.person] = { name: pk.person, picks: 0, value: 0, cost: 0 });
       m.picks++; m.value += value; m.cost += cost;
@@ -5612,7 +5648,9 @@ function renderInsights() {
         "Value = each drafted player's KTC 3 years after that draft (the snapshot nearest that date), or current value for picks under 3 years old. " +
         "Slot cost = the KTC a pick in that slot is typically worth. ROI = value − cost; positive means their picks returned more than the slots they spent.")));
 
-    const graded = pickRows.filter(p => p.cost > 0);
+    // Only judge picks old enough to have proved out (3+ years); recent picks
+    // are still developing and shouldn't be branded steals or busts.
+    const graded = pickRows.filter(p => p.cost > 0 && p.settled);
     const steals = graded.slice().sort((a, b) => b.roi - a.roi).slice(0, 8);
     const busts = graded.slice().sort((a, b) => a.roi - b.roi).slice(0, 8);
     const pickRow = (p, cls) => el("div", { class: "trade-line" },
@@ -5634,7 +5672,7 @@ function renderInsights() {
       ),
       el("div", { class: "pct", style: "margin-top:8px" },
         "Each pick's ROI = the player's KTC 3 years after the draft minus the slot's typical cost. " +
-        "Picks marked “current” are under 3 years old and judged on today's value.")));
+        "Only picks at least 3 years old are shown, so recent classes aren't judged before they've developed.")));
   }
 
   // ===== Team profiles / contention windows =====
