@@ -5385,6 +5385,121 @@ function positionClass(pos) {
   }
 }
 
+// ---------- Insights: league-wide analytics ----------
+function renderInsights() {
+  const main = document.getElementById("main");
+  main.innerHTML = "";
+  ensureSleeperLoaded();
+  ensureKtcDynastyLoaded();
+  ensureTradeHistoryLoaded();
+  if (!IS_DEFAULT_LEAGUE && !state.picks.length) buildAutoPicks();
+
+  if (state.sleeperLoading || !state.sleeper) {
+    main.appendChild(el("div", { class: "empty" }, "Loading league data…"));
+    return;
+  }
+  const seasons = state.sleeper.seasons;
+  const latest = seasons[seasons.length - 1];
+  const players = state.sleeper.players;
+  const history = state.tradeHistory;
+  const haveValues = !!state.ktcDynasty;
+
+  // ===== Trade ledger + partner counts (single pass over all trades) =====
+  const ledger = {};      // name -> aggregate
+  const pairCount = {};    // "a||b" -> trade count
+  const mgr = name => ledger[name] || (ledger[name] = { name, trades: 0, net: 0, won: 0, lost: 0 });
+  seasons.forEach(season => {
+    (season.trades || []).forEach(trade => {
+      const names = (trade.roster_ids || []).map(rid =>
+        canonicalOwnerName(userDisplay(rosterToOwner(season, rid))));
+      for (let i = 0; i < names.length; i++)
+        for (let j = i + 1; j < names.length; j++)
+          { const k = [names[i], names[j]].sort().join("||"); pairCount[k] = (pairCount[k] || 0) + 1; }
+      if (!haveValues) return;
+      (trade.roster_ids || []).forEach((rid, idx) => {
+        const ev = evaluateTrade(trade, rid, history, players);
+        if (!ev) return;
+        const m = mgr(names[idx]);
+        m.trades++;
+        m.net += ev.swing;
+        if (ev.swing > 0) m.won++; else if (ev.swing < 0) m.lost++;
+      });
+    });
+  });
+
+  main.appendChild(el("div", { class: "section-header" }, "Trade Ledger",
+    el("span", { class: "section-sub" }, "Net KTC value won or lost via trades, by KTC's fairness model")));
+  const ledgerCard = el("div", { class: "card" }, el("h2", {}, "Who Wins Trades"));
+  if (!haveValues) {
+    ledgerCard.appendChild(el("div", { class: "empty" }, "Loading KTC values…"));
+  } else {
+    const rows = Object.values(ledger);
+    if (!rows.length) {
+      ledgerCard.appendChild(el("div", { class: "empty" }, "No completed trades found."));
+    } else {
+      if (!state.insightsLedgerSort) state.insightsLedgerSort = { col: "net", dir: "desc" };
+      const ss = state.insightsLedgerSort;
+      rows.sort((a, b) => {
+        const av = a[ss.col], bv = b[ss.col];
+        const cmp = av < bv ? -1 : av > bv ? 1 : (a.name < b.name ? -1 : 1);
+        return ss.dir === "asc" ? cmp : -cmp;
+      });
+      const table = el("table", {},
+        el("thead", {}, el("tr", {},
+          sortHeader("Manager", "name", ss, () => { toggleSort(ss, "name"); render(); }, "", ""),
+          sortHeader("Trades", "trades", ss, () => { toggleSort(ss, "trades"); render(); }),
+          sortHeader("Won", "won", ss, () => { toggleSort(ss, "won"); render(); }),
+          sortHeader("Lost", "lost", ss, () => { toggleSort(ss, "lost"); render(); }),
+          sortHeader("Net KTC", "net", ss, () => { toggleSort(ss, "net"); render(); }),
+        )));
+      const tb = el("tbody", {});
+      rows.forEach(r => tb.appendChild(el("tr", {},
+        el("td", {}, r.name),
+        el("td", { class: "num" }, String(r.trades)),
+        el("td", { class: "num" }, String(r.won)),
+        el("td", { class: "num" }, String(r.lost)),
+        el("td", { class: "num " + (r.net > 0 ? "delta-pos" : r.net < 0 ? "delta-neg" : "") },
+          (r.net > 0 ? "+" : "") + Math.round(r.net).toLocaleString()),
+      )));
+      table.appendChild(tb);
+      ledgerCard.appendChild(table);
+      ledgerCard.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+        "Net KTC sums each trade's consolidation-adjusted swing from that manager's side; positive = came out ahead. " +
+        "Trades are valued as of the date they were made."));
+    }
+  }
+  main.appendChild(ledgerCard);
+
+  // ===== Trade partner matrix =====
+  const axisNames = latest.rosters
+    .map(r => canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id))))
+    .sort((a, b) => a.localeCompare(b));
+  if (axisNames.length) {
+    main.appendChild(el("div", { class: "section-header" }, "Trade Partners",
+      el("span", { class: "section-sub" }, "Number of trades between each pair of managers")));
+    let maxPair = 1;
+    Object.values(pairCount).forEach(c => { if (c > maxPair) maxPair = c; });
+    const table = el("table", { class: "hist-table" });
+    const head = el("tr", {}, el("th", {}, ""));
+    axisNames.forEach(n => head.appendChild(el("th", {}, n)));
+    table.appendChild(el("thead", {}, head));
+    const tb = el("tbody", {});
+    axisNames.forEach(rowName => {
+      const tr = el("tr", {}, el("th", {}, rowName));
+      axisNames.forEach(colName => {
+        if (rowName === colName) { tr.appendChild(el("td", { style: "background:var(--bg)" }, "")); return; }
+        const c = pairCount[[rowName, colName].sort().join("||")] || 0;
+        const alpha = c ? (0.12 + 0.5 * (c / maxPair)).toFixed(2) : 0;
+        tr.appendChild(el("td", { class: "num", style: c ? `background:rgba(88,166,255,${alpha})` : "" },
+          c ? String(c) : ""));
+      });
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    main.appendChild(el("div", { class: "card" }, table));
+  }
+}
+
 function renderTrades() {
   const main = document.getElementById("main");
   main.innerHTML = "";
@@ -6095,6 +6210,7 @@ const WORKSPACE_TABS = {
     { view: "stats", label: "Stats" },
     { view: "trades", label: "Trades" },
     { view: "history", label: "History" },
+    { view: "insights", label: "Insights" },
   ],
   team: [
     { view: "liveDraft", label: "Live Draft" },
@@ -6832,6 +6948,7 @@ function render() {
     case "stats": renderStats(); break;
     case "trades": renderTrades(); break;
     case "history": renderHistory(); break;
+    case "insights": renderInsights(); break;
     case "overview": renderOverview(); break;
     // Team workspace
     case "teams": renderTeams(); break;
