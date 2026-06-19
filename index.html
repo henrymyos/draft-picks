@@ -5888,9 +5888,26 @@ function buildFeedbackBlock(item, players, seasons, typeAt) {
     return node;
   };
 
-  block.appendChild(el("div", { class: "trade-header" },
+  const header = el("div", { class: "trade-header" },
     el("span", { class: "trade-date" }, names.join("  ↔  ")),
-    el("span", { class: "trade-meta" }, fmtDate(trade.created) + "  ·  " + season.season + " season")));
+    el("span", { class: "trade-meta" }, fmtDate(trade.created) + "  ·  " + season.season + " season"));
+  // Net KTC verdict — from the filtered team's side when one is selected,
+  // otherwise the first team listed. Green = came out ahead, red = lost.
+  let perspRid = (trade.roster_ids || [])[0];
+  if (state.tradesTeam && state.tradesTeam !== "__all__") {
+    const m = (trade.roster_ids || []).find(rid => canonicalOwnerName(userDisplay(rosterToOwner(season, rid))) === state.tradesTeam);
+    if (m != null) perspRid = m;
+  }
+  const ev0 = evByRid[perspRid];
+  if (ev0 && (ev0.mySent > 0 || ev0.myReceived > 0)) {
+    const sw = ev0.swing;
+    const perspName = canonicalOwnerName(userDisplay(rosterToOwner(season, perspRid)));
+    header.appendChild(el("span", {
+      class: "trade-value-tag " + (sw > 0 ? "delta-pos" : sw < 0 ? "delta-neg" : ""),
+      title: "Net KTC value (consolidation-adjusted, " + ev0.snapshot + ")",
+    }, perspName + " " + (sw >= 0 ? "+" : "−") + Math.abs(sw).toLocaleString() + " KTC"));
+  }
+  block.appendChild(header);
 
   const cols = el("div", { class: "trade-cols" });
   (trade.roster_ids || []).forEach(rid => {
