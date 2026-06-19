@@ -5899,7 +5899,7 @@ function renderTradeFeedback() {
   main.appendChild(controls);
 
   main.appendChild(el("div", { class: "section-header" }, "Trade Feedback",
-    el("span", { class: "section-sub" }, "AI breakdown of each trade — why each side did it and whether it helped")));
+    el("span", { class: "section-sub" }, "Instant breakdown of each trade — why each side did it and whether it helped (optional AI deep-dive)")));
 
   const filtered = state.feedbackTeam === "__all__" ? all : all.filter(t => t.names.includes(state.feedbackTeam));
   if (!filtered.length) {
@@ -5913,6 +5913,73 @@ function renderTradeFeedback() {
 
 function renderAnalysisText(text) {
   return el("div", { style: "white-space:pre-wrap; font-size:14px; line-height:1.55; margin-top:8px" }, text);
+}
+
+// Free, deterministic trade write-up composed from the data — no AI/API. One
+// paragraph per team: what they did, KTC's verdict, and the strategic read.
+function templateTradeAnalysis(item, players, evByRid, typeForName) {
+  const { season, trade } = item;
+  const POS = ["QB", "RB", "WR", "TE"];
+  const ord = r => (r === 1 ? "1st" : r === 2 ? "2nd" : r === 3 ? "3rd" : r + "th");
+  const assetName = d => {
+    if (d.kind === "player") { const p = players[d.pid]; return p ? p.name : "a player"; }
+    return d.dp.season + " " + ord(d.dp.round) + " pick";
+  };
+  const posOf = d => d.kind === "player" ? ((players[d.pid] || {}).position || null) : "PICK";
+  const list = arr => {
+    const n = arr.map(assetName);
+    if (!n.length) return "depth pieces";
+    if (n.length === 1) return n[0];
+    if (n.length === 2) return n[0] + " and " + n[1];
+    return n.slice(0, -1).join(", ") + ", and " + n[n.length - 1];
+  };
+  const paras = [];
+  (trade.roster_ids || []).forEach(rid => {
+    const nm = canonicalOwnerName(userDisplay(rosterToOwner(season, rid)));
+    const type = typeForName[nm] || null;
+    const ev = evByRid[rid];
+    if (!ev) { paras.push(nm + ": not enough KTC data to grade this side."); return; }
+    const got = ev.gotDetail, gave = ev.sentDetail;
+    const posDelta = { QB: 0, RB: 0, WR: 0, TE: 0 };
+    got.forEach(d => { const p = posOf(d); if (posDelta[p] != null) posDelta[p] += d.value; });
+    gave.forEach(d => { const p = posOf(d); if (posDelta[p] != null) posDelta[p] -= d.value; });
+    const pickGot = got.filter(d => d.kind === "pick").reduce((s, d) => s + d.value, 0);
+    const pickGave = gave.filter(d => d.kind === "pick").reduce((s, d) => s + d.value, 0);
+    const gotPlayers = got.some(d => d.kind === "player");
+    const gavePlayers = gave.some(d => d.kind === "player");
+
+    const s1 = nm + (type ? " (" + type + ")" : "") + " sent " + list(gave) + " to land " + list(got) + ".";
+
+    const favor = ev.swing, size = Math.max(ev.myReceived, ev.mySent, 1), ratio = favor / size, a = Math.abs(favor);
+    let s2;
+    if (a < 250 || Math.abs(ratio) < 0.05) s2 = "KTC grades it essentially even.";
+    else if (favor > 0) s2 = ratio > 0.18 ? ("KTC calls this a clear win for " + nm + ", +" + favor + " in their favor.")
+      : ("KTC gives " + nm + " a modest edge, +" + favor + ".");
+    else s2 = ratio < -0.18 ? ("KTC sees " + nm + " losing this one by roughly " + a + ".")
+      : ("KTC has " + nm + " slightly behind, about " + a + ".");
+
+    const bits = [];
+    if (pickGave > pickGot + 500 && gotPlayers) bits.push("spending draft capital on proven production");
+    else if (pickGot > pickGave + 500 && gavePlayers) bits.push("cashing players for future draft capital");
+    let up = null, down = null;
+    POS.forEach(p => {
+      if (posDelta[p] > 600 && (!up || posDelta[p] > posDelta[up])) up = p;
+      if (posDelta[p] < -600 && (!down || posDelta[p] < posDelta[down])) down = p;
+    });
+    if (up && down) bits.push("deepening " + up + " while thinning " + down);
+    else if (up) bits.push("deepening " + up);
+    else if (down) bits.push("thinning " + down);
+    const s3 = bits.length ? (nm + " is " + bits.join(" and ") + ".") : "";
+
+    let s4 = "";
+    if (type === "Contender" && pickGot > pickGave + 1000) s4 = "Patient for a roster built to win now.";
+    else if (type === "Contender") s4 = "In line with a win-now window.";
+    else if (type === "Reloader" && pickGot > pickGave + 500) s4 = "Sensible stockpiling for the rebuild.";
+    else if (type === "Reloader" && pickGave > pickGot + 1000) s4 = "Aggressive for a team that looks a year or two away.";
+
+    paras.push([s1, s2, s3, s4].filter(Boolean).join(" "));
+  });
+  return paras.join("\n\n");
 }
 
 function buildTradeContext(item, players, evByRid, typeForName) {
@@ -5986,14 +6053,22 @@ function buildFeedbackBlock(item, players, seasons, typeForName) {
   });
   block.appendChild(cols);
 
-  // Lazy AI analysis, cached per trade so each is only generated (and billed) once.
+  // Free, instant, template-based analysis (no AI, no cost) — always shown.
+  block.appendChild(renderAnalysisText(templateTradeAnalysis(item, players, evByRid, typeForName)));
+
+  // Optional richer AI write-up (requires ANTHROPIC_API_KEY), cached per trade.
   const txid = trade.tx_id || (season.season + "-" + (trade.created || 0));
-  const wrap = el("div", { style: "margin-top:10px" });
+  const wrap = el("div", { style: "margin-top:8px" });
+  const showAI = txt => {
+    wrap.innerHTML = "";
+    wrap.appendChild(el("div", { class: "pct", style: "margin-top:2px" }, "AI write-up:"));
+    wrap.appendChild(renderAnalysisText(txt));
+  };
   const cached = state.tradeFeedbackCache && state.tradeFeedbackCache[txid];
   if (cached) {
-    wrap.appendChild(renderAnalysisText(cached));
+    showAI(cached);
   } else {
-    const btn = el("button", { class: "refresh", type: "button" }, "✨ Analyze this trade");
+    const btn = el("button", { class: "refresh", type: "button" }, "✨ Deeper AI write-up");
     btn.addEventListener("click", () => {
       btn.disabled = true;
       btn.textContent = "Analyzing…";
@@ -6006,12 +6081,11 @@ function buildFeedbackBlock(item, players, seasons, typeForName) {
         .then(d => {
           state.tradeFeedbackCache = state.tradeFeedbackCache || {};
           state.tradeFeedbackCache[txid] = d.analysis;
-          wrap.innerHTML = "";
-          wrap.appendChild(renderAnalysisText(d.analysis));
+          showAI(d.analysis);
         })
         .catch(e => {
           btn.disabled = false;
-          btn.textContent = "✨ Analyze this trade";
+          btn.textContent = "✨ Deeper AI write-up";
           wrap.appendChild(el("div", { class: "pct", style: "color:var(--miss); margin-top:6px" }, e.message));
         });
     });
