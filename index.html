@@ -5509,7 +5509,11 @@ function renderInsights() {
           sortHeader("Net KTC", "net", ss, () => { toggleSort(ss, "net"); render(); }),
         )));
       const tb = el("tbody", {});
-      rows.forEach(r => tb.appendChild(el("tr", {},
+      rows.forEach(r => tb.appendChild(el("tr", {
+        class: "row-clickable",
+        title: "View " + r.name + "'s trades",
+        onclick: () => { state.tradesTeam = r.name; state.view = "trades"; rebuildTabsNav(); render(); },
+      },
         el("td", {}, r.name),
         el("td", { class: "num" }, String(r.trades)),
         el("td", { class: "num" }, String(r.won)),
