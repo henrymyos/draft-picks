@@ -5753,6 +5753,9 @@ function renderTrades() {
   seasons.forEach(season => {
     (season.trades || []).forEach(trade => {
       if (trade.tx_id != null) { if (seen.has(trade.tx_id)) return; seen.add(trade.tx_id); }
+      // Skip trades involving 2019 picks — those were startup-draft picks and
+      // have no KTC value, so they can't be valued or analyzed fairly.
+      if ((trade.draft_picks || []).some(dp => parseInt(dp.season, 10) === 2019)) return;
       const names = (trade.roster_ids || []).map(rid => canonicalOwnerName(userDisplay(rosterToOwner(season, rid))));
       all.push({ season, trade, names });
     });
