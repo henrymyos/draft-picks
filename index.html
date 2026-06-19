@@ -5719,16 +5719,33 @@ function renderTrades() {
   const latest = seasons[seasons.length - 1];
   const players = state.sleeper.players;
 
-  // Contention window per manager (latest-season rankings) for the analysis.
-  const typeForName = {};
+  // Time-accurate contention window: classify each team by how they actually
+  // finished the season the trade happened in, so a trade from years ago reads
+  // against that team's window THEN — not now. Falls back to the current
+  // window for the in-progress season (no finish yet) or missing data.
+  const currentType = {};
   const ranked = state.ktcDynasty ? computeManagerRankings() : null;
   if (ranked) {
     const typeByRid = {};
     ranked.forEach(r => { typeByRid[r.roster_id] = classifyManager(r.cRank, ranked.length).label; });
     latest.rosters.forEach(r => {
-      typeForName[canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id)))] = typeByRid[r.roster_id] || null;
+      currentType[canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id)))] = typeByRid[r.roster_id] || null;
     });
   }
+  const histByYear = {};
+  (computeLeagueHistory() || []).forEach(y => {
+    if (Object.keys(y.finishes || {}).length) histByYear[String(y.year)] = { places: y.finishes, teams: y.teams || 12 };
+  });
+  const typeAt = (name, season) => {
+    const h = histByYear[String(season.season)];
+    if (h && h.places[name] != null) {
+      const n = h.teams, place = h.places[name];
+      if (place <= n / 2) return "Contender";
+      if (place <= 0.75 * n) return "Middler";
+      return "Reloader";
+    }
+    return currentType[name] || null;
+  };
 
   // Every completed trade across all seasons, newest first.
   const all = [];
@@ -5765,8 +5782,10 @@ function renderTrades() {
     return;
   }
   const card = el("div", { class: "card" });
-  filtered.forEach(item => card.appendChild(buildFeedbackBlock(item, players, seasons, typeForName)));
+  filtered.forEach(item => card.appendChild(buildFeedbackBlock(item, players, seasons, typeAt)));
   main.appendChild(card);
+  main.appendChild(el("div", { class: "pct", style: "margin-top:8px" },
+    "Contender / Middler / Reloader reflects how that team finished the season of the trade (their current window for the latest season)."));
 }
 
 function renderAnalysisText(text) {
@@ -5775,7 +5794,7 @@ function renderAnalysisText(text) {
 
 // Free, deterministic trade write-up composed from the data — no AI/API. One
 // paragraph per team: what they did, KTC's verdict, and the strategic read.
-function templateTradeAnalysis(item, players, evByRid, typeForName) {
+function templateTradeAnalysis(item, players, evByRid, typeAt) {
   const { season, trade } = item;
   const POS = ["QB", "RB", "WR", "TE"];
   const ord = r => (r === 1 ? "1st" : r === 2 ? "2nd" : r === 3 ? "3rd" : r + "th");
@@ -5794,7 +5813,7 @@ function templateTradeAnalysis(item, players, evByRid, typeForName) {
   const paras = [];
   (trade.roster_ids || []).forEach(rid => {
     const nm = canonicalOwnerName(userDisplay(rosterToOwner(season, rid)));
-    const type = typeForName[nm] || null;
+    const type = typeAt(nm, season) || null;
     const ev = evByRid[rid];
     if (!ev) { paras.push(nm + ": not enough KTC data to grade this side."); return; }
     const got = ev.gotDetail, gave = ev.sentDetail;
@@ -5840,7 +5859,7 @@ function templateTradeAnalysis(item, players, evByRid, typeForName) {
   return paras.join("\n\n");
 }
 
-function buildFeedbackBlock(item, players, seasons, typeForName) {
+function buildFeedbackBlock(item, players, seasons, typeAt) {
   const { season, trade, names } = item;
   const block = el("div", { class: "trade-block" });
 
@@ -5866,7 +5885,8 @@ function buildFeedbackBlock(item, players, seasons, typeForName) {
   const cols = el("div", { class: "trade-cols" });
   (trade.roster_ids || []).forEach(rid => {
     const nm = canonicalOwnerName(userDisplay(rosterToOwner(season, rid)));
-    const t = typeForName[nm] ? " (" + typeForName[nm] + ")" : "";
+    const tp = typeAt(nm, season);
+    const t = tp ? " (" + tp + ")" : "";
     const col = el("div", { class: "trade-col" }, el("div", { class: "trade-col-label" }, nm + t + " got"));
     let any = false;
     Object.entries(trade.adds || {}).forEach(([pid, r]) => {
@@ -5885,7 +5905,7 @@ function buildFeedbackBlock(item, players, seasons, typeForName) {
   block.appendChild(cols);
 
   // Free, instant, template-based analysis (no AI, no cost).
-  block.appendChild(renderAnalysisText(templateTradeAnalysis(item, players, evByRid, typeForName)));
+  block.appendChild(renderAnalysisText(templateTradeAnalysis(item, players, evByRid, typeAt)));
   return block;
 }
 
