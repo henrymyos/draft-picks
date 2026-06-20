@@ -4825,7 +4825,10 @@ async function loadSleeper(force = false) {
   state.sleeperError = null;
   render();
   try {
-    const res = await fetch("/api/sleeper?league_id=" + LEAGUE_ID + (force ? "&_=" + Date.now() : ""), { cache: "no-store" });
+    // Bump v= whenever the /api/sleeper response shape changes — it changes the
+    // edge-cache key so clients aren't served a stale response missing new
+    // fields (v3 added weekly matchups + playoff_week_start).
+    const res = await fetch("/api/sleeper?league_id=" + LEAGUE_ID + "&v=3" + (force ? "&_=" + Date.now() : ""), { cache: "no-store" });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (data.error) throw new Error(data.error);
