@@ -3082,6 +3082,50 @@ function renderRosters() {
   }
   const myType = managerType[selectedRoster.roster_id] || "Middler";
 
+  // ---------- Trade-history signals (every completed trade, all seasons) ----------
+  // The contention-window model says who SHOULD want a player; trade history says
+  // who actually trades, who they trade with, and what they like to acquire. These
+  // signals nudge the recommendation list toward realistically-completable deals.
+  //   histTrades[owner]    -> career count of trades they were part of (activity)
+  //   histPairCount[a||b]  -> trades between that specific pair (affinity)
+  //   histPickLean[owner]  -> picks / (picks+players) they've RECEIVED, 0..1,
+  //                           only set once there's ≥3 received assets of signal
+  const histTrades = {};
+  const histPairCount = {};
+  const histPickLean = {};
+  (function buildTradeSignals() {
+    const recvPicks = {}, recvPlayers = {};
+    (state.sleeper.seasons || []).forEach(season => {
+      (season.trades || []).forEach(trade => {
+        const ridName = {};
+        const nameOf = rid => {
+          if (rid in ridName) return ridName[rid];
+          const u = rosterToOwner(season, rid);
+          return ridName[rid] = u ? canonicalOwnerName(userDisplay(u)) : null;
+        };
+        const names = (trade.roster_ids || []).map(nameOf).filter(Boolean);
+        names.forEach(n => { histTrades[n] = (histTrades[n] || 0) + 1; });
+        for (let i = 0; i < names.length; i++)
+          for (let j = i + 1; j < names.length; j++) {
+            const k = [names[i], names[j]].sort().join("||");
+            histPairCount[k] = (histPairCount[k] || 0) + 1;
+          }
+        // adds: player_id -> roster_id that received the player.
+        Object.values(trade.adds || {}).forEach(rid => {
+          const n = nameOf(rid); if (n) recvPlayers[n] = (recvPlayers[n] || 0) + 1;
+        });
+        // draft_picks: owner_id is the roster that received the pick.
+        (trade.draft_picks || []).forEach(dp => {
+          const n = nameOf(dp.owner_id); if (n) recvPicks[n] = (recvPicks[n] || 0) + 1;
+        });
+      });
+    });
+    Object.keys({ ...recvPicks, ...recvPlayers }).forEach(n => {
+      const p = recvPicks[n] || 0, pl = recvPlayers[n] || 0;
+      if (p + pl >= 3) histPickLean[n] = p / (p + pl);  // neutral (unset) until enough signal
+    });
+  })();
+
   // How well a given asset fits the recipient's window. 0..1, higher = better.
   // How well an asset fits the RECEIVING team's window, by tier.
   // Reloaders don't want production-now tiers (Mainstay, Productive Vet,
@@ -3161,6 +3205,15 @@ function renderRosters() {
     const theirNeed = needSetFor(other.roster_id);
     const theirSideData = buildSides(movablePool(otherAssets), other.roster_id);
 
+    // History-derived realism for this partner (computed once per partner).
+    const pairKey = [selectedName, otherName].sort().join("||");
+    const priorTrades = histPairCount[pairKey] || 0;
+    const partnerActivity = histTrades[otherName] || 0;
+    const aff = Math.min(1, priorTrades / 3);        // 3+ prior deals = full affinity
+    const act = Math.min(1, partnerActivity / 5);    // 5+ career trades = fully active
+    const hasPref = histPickLean[otherName] != null;
+    const partnerPickLean = hasPref ? histPickLean[otherName] : 0.5;
+
     for (const { side: gives, sum: myGivesSum } of mySideData) {
       for (const { side: gets, sum: getsSum } of theirSideData) {
         // Cheapest discriminator first — the vast majority of pairs fail the
@@ -3206,8 +3259,15 @@ function renderRosters() {
         const myAlign = alignmentAvg(gets, myType);
         const theirAlign = alignmentAvg(gives, theirType);
         const alignScore = (myAlign + theirAlign) / 2;
-        const score = fairness * 0.45 + (fitScore / 4) * 0.15 + alignScore * 0.15
-          + mixBonus + realismBonus - realismPenalty - sizePenalty;
+        // History realism: reward partners you've actually dealt with (affinity),
+        // partners who actually trade (activity), and packages shaped to what the
+        // partner historically likes to receive (picks vs players). prefFit stays
+        // neutral until that partner has enough received-asset history.
+        const sendPickFrac = gives.length ? gives.filter(a => a.kind === "pick").length / gives.length : 0;
+        const prefFit = hasPref ? 1 - Math.abs(sendPickFrac - partnerPickLean) : 0.5;
+        const historyScore = 0.45 * aff + 0.25 * act + 0.30 * prefFit;
+        const score = fairness * 0.42 + (fitScore / 4) * 0.14 + alignScore * 0.14
+          + historyScore * 0.12 + mixBonus + realismBonus - realismPenalty - sizePenalty;
         allTrades.push({
           partnerName: otherName,
           partnerRosterId: other.roster_id,
@@ -3218,6 +3278,8 @@ function renderRosters() {
           fairness, score, shape,
           anchorPos: samePosAnchor ? givesPos : null,
           dealValue: Math.max(myGivesSum.ktc, getsSum.ktc),
+          priorTrades, partnerActivity,
+          partnerPickLean: hasPref ? partnerPickLean : null,
         });
       }
     }
@@ -3332,6 +3394,23 @@ function renderRosters() {
       if (t.theirFits.length) fitBits.push(t.partnerName + " fills: " + t.theirFits.join(", "));
       block.appendChild(el("div", { class: "pct", style: "margin-top:6px" }, fitBits.join("  ·  ")));
 
+      // History-based realism note: prior dealings + the partner's revealed taste.
+      const histBits = [];
+      if (t.priorTrades > 0) {
+        histBits.push(`Traded with ${t.partnerName} ${t.priorTrades}×`);
+      } else if (t.partnerActivity > 0) {
+        histBits.push(`No prior deals; ${t.partnerName} has ${t.partnerActivity} career trade${t.partnerActivity === 1 ? "" : "s"}`);
+      } else {
+        histBits.push(`${t.partnerName} has no trade history`);
+      }
+      if (t.partnerPickLean != null) {
+        histBits.push(t.partnerPickLean >= 0.6 ? "tends to acquire picks"
+          : t.partnerPickLean <= 0.4 ? "tends to acquire players"
+          : "acquires picks & players evenly");
+      }
+      block.appendChild(el("div", { class: "pct", style: "margin-top:4px; opacity:0.85" },
+        "📜 " + histBits.join("  ·  ")));
+
       // Per-trade action row: copy + open Sleeper trade page.
       function tradeText() {
         const sendList = t.gives.map(a => `  - ${a.name} (${a.position})`).join("\n");
@@ -3358,7 +3437,8 @@ function renderRosters() {
     "(c) after the swap, the giver doesn't lose depth at any shipped-out position — required floor is min(pre-trade depth, league-recommended QB ≥ 3, RB ≥ 4, WR ≥ 4, TE ≥ 2), so a roster that was already below the floor only has to hold what it had, and " +
     "(d) at least one need-set position improves on each side. " +
     "Need set = positions below 85% of league average value; if a roster has none, the two weakest starter positions are used as the need set instead. " +
-    "Composite score: 50% fairness + 20% mutual fit count + 20% type alignment + up to 10% player↔pick mix bonus − size penalty. " +
+    "Composite score: 42% fairness + 14% mutual fit count + 14% type alignment + 12% trade-history realism + up to 10% player↔pick mix bonus − size penalty. " +
+    "Trade-history realism mines every completed trade across all seasons: it favors partners you've actually dealt with before (affinity), partners who trade actively, and packages shaped to what each partner historically likes to receive — picks vs players (revealed preference, applied only once a manager has ≥3 acquired assets of signal). " + +
     "Type alignment is tier-based: Contenders are rewarded for receiving Foundational / Mainstay / Productive Vet / Short Term League Winner / Short Term Production / Jag - Insurance assets and shipping out Upside Premier / Upside Shot / Jag - Developmental; Reloaders are the reverse and are penalized for receiving any production-now tier; Middlers stay neutral. " +
     "max 2 per partner, max 3 per combo size, max 3 trades involving any Cornerstone asset, and capped at 4 player-only and 2 pick-only trades so the list spans every trade type."
   ));
