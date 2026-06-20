@@ -5620,7 +5620,7 @@ function renderInsights() {
       rows.forEach(r => tb.appendChild(el("tr", {
         class: "row-clickable",
         title: "View " + r.name + "'s trades",
-        onclick: () => { state.tradesTeam = r.name; state.view = "trades"; rebuildTabsNav(); render(); },
+        onclick: () => { state.tradesPair = null; state.tradesTeam = r.name; state.view = "trades"; rebuildTabsNav(); render(); },
       },
         el("td", {}, r.name),
         el("td", { class: "num" }, String(r.trades)),
@@ -5644,7 +5644,7 @@ function renderInsights() {
     .sort((a, b) => a.localeCompare(b));
   if (axisNames.length) {
     main.appendChild(el("div", { class: "section-header" }, "Trade Partners",
-      el("span", { class: "section-sub" }, "Number of trades between each pair of managers")));
+      el("span", { class: "section-sub" }, "Number of trades between each pair of managers — click a cell to see those trades")));
     let maxPair = 1;
     Object.values(pairCount).forEach(c => { if (c > maxPair) maxPair = c; });
     const table = el("table", { class: "hist-table" });
@@ -5658,8 +5658,18 @@ function renderInsights() {
         if (rowName === colName) { tr.appendChild(el("td", { style: "background:var(--bg)" }, "")); return; }
         const c = pairCount[[rowName, colName].sort().join("||")] || 0;
         const alpha = c ? (0.12 + 0.5 * (c / maxPair)).toFixed(2) : 0;
-        tr.appendChild(el("td", { class: "num", style: c ? `background:rgba(88,166,255,${alpha})` : "" },
-          c ? String(c) : ""));
+        tr.appendChild(el("td", {
+          class: "num" + (c ? " row-clickable" : ""),
+          style: c ? `background:rgba(88,166,255,${alpha})` : "",
+          title: c ? `View the ${c} trade${c === 1 ? "" : "s"} between ${rowName} and ${colName}` : "",
+          onclick: c ? () => {
+            state.tradesPair = [rowName, colName];
+            state.tradesTeam = "__all__";
+            state.view = "trades";
+            rebuildTabsNav();
+            render();
+          } : null,
+        }, c ? String(c) : ""));
       });
       tb.appendChild(tr);
     });
@@ -5882,16 +5892,39 @@ function renderTrades() {
     .map(r => canonicalOwnerName(userDisplay(rosterToOwner(latest, r.roster_id))))
     .sort((a, b) => a.localeCompare(b));
   if (!state.tradesTeam) state.tradesTeam = "__all__";
+  // A pair filter (set by clicking a Trade Partners cell) shows only trades
+  // between those two managers and takes precedence over the single-team filter.
+  const pair = Array.isArray(state.tradesPair) && state.tradesPair.length === 2 ? state.tradesPair : null;
   const controls = el("div", { class: "controls" });
   controls.appendChild(customSelect(
     [{ value: "__all__", label: "All teams" }, ...teamNames.map(n => ({ value: n, label: n }))],
-    state.tradesTeam,
-    v => { state.tradesTeam = v; render(); }));
+    pair ? "__all__" : state.tradesTeam,
+    v => { state.tradesPair = null; state.tradesTeam = v; render(); }));
   main.appendChild(controls);
 
-  const filtered = state.tradesTeam === "__all__" ? all : all.filter(t => t.names.includes(state.tradesTeam));
+  let filtered, headerTitle;
+  if (pair) {
+    filtered = all.filter(t => t.names.includes(pair[0]) && t.names.includes(pair[1]));
+    headerTitle = pair[0] + " ↔ " + pair[1];
+  } else if (state.tradesTeam === "__all__") {
+    filtered = all;
+    headerTitle = "All Trades";
+  } else {
+    filtered = all.filter(t => t.names.includes(state.tradesTeam));
+    headerTitle = state.tradesTeam + " — Trades";
+  }
+
+  if (pair) {
+    const back = el("div", { class: "controls", style: "margin-top:-4px" },
+      el("button", {
+        class: "action-btn",
+        onclick: () => { state.tradesPair = null; state.tradesTeam = "__all__"; render(); },
+      }, "← Back to all trades"));
+    main.appendChild(back);
+  }
+
   main.appendChild(el("div", { class: "section-header" },
-    state.tradesTeam === "__all__" ? "All Trades" : state.tradesTeam + " — Trades",
+    headerTitle,
     el("span", { class: "section-sub" },
       filtered.length + " trade" + (filtered.length === 1 ? "" : "s") + " — why each side did it and whether it helped")));
 
